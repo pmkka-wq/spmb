@@ -477,11 +477,16 @@ const API = (() => {
      * Isi survei sumber info pendaftar (Bagian 3 poin 13, kartu opsional
      * di halaman sukses). Hanya bisa 1x per pendaftar, hanya kalau
      * CONFIG.FITUR_SURVEI_AKTIF = "Ya".
-     * @param {string} jawaban
+     *
+     * `jawabanSumberDetail` hanya perlu diisi kalau `jawabanSumber` yang
+     * dipilih ada di CONFIG.SURVEI_SUMBER_INFO_LIST_2 (mis. "Media Sosial"
+     * atau "WhatsApp") — cek dulu lewat getConfig() sebelum menampilkan
+     * dropdown kedua di form.
+     * @param {Object} data - { jawabanAlasan, jawabanSumber, jawabanSumberDetail? }
      * @returns {Promise<{ok, pesan}>}
      */
-    async function submitSurvei(jawaban) {
-        return _post({ action: "submitSurvei", jawaban }, true);
+    async function submitSurvei(data) {
+        return _post({ action: "submitSurvei", ...data }, true);
     }
 
     // -------------------------------------------------------------------------
