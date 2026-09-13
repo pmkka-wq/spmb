@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPMB Mudacil — Tes Koneksi API</title>
+<style>
+    :root {
+        --bg: #f7f8f7;
+        --panel: #ffffff;
+        --ink: #16211a;
+        --muted: #5b6b60;
+        --line: #dfe6e1;
+        --ok: #1c7c4d;
+        --ok-bg: #e9f7ef;
+        --fail: #b3402f;
+        --fail-bg: #fbeae6;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        padding: 40px 20px 80px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        line-height: 1.5;
+    }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    header { margin-bottom: 28px; }
+    h1 {
+        font-size: 1.4rem;
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
+    }
+    .subtitle { color: var(--muted); font-size: 0.92rem; margin: 0; }
+    .notice {
+        background: #fff8e6;
+        border: 1px solid #f0dfa8;
+        color: #6b5510;
+        border-radius: 8px;
+        padding: 12px 14px;
+        font-size: 0.85rem;
+        margin: 18px 0 0;
+    }
+
+    .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 20px;
+        margin-top: 20px;
+    }
+    .panel h2 {
+        font-size: 0.95rem;
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-weight: 600;
+        text-transform: none;
+    }
+
+    .baris {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.9rem;
+    }
+    .baris:last-child { border-bottom: none; }
+    .baris .label { color: var(--muted); }
+    .baris .nilai { font-family: var(--mono); font-size: 0.86rem; text-align: right; word-break: break-all; }
+
+    .status-pill {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        font-family: var(--mono);
+    }
+    .status-pill.ok { background: var(--ok-bg); color: var(--ok); }
+    .status-pill.fail { background: var(--fail-bg); color: var(--fail); }
+    .status-pill.loading { background: #eef0ee; color: var(--muted); }
+
+    .aksi-cepat {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 4px;
+    }
+    button {
+        font: inherit;
+        font-size: 0.85rem;
+        padding: 8px 14px;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        cursor: pointer;
+    }
+    button:hover { border-color: #b9c3bc; }
+    button.utama {
+        background: var(--ink);
+        color: #fff;
+        border-color: var(--ink);
+    }
+    button.utama:hover { opacity: 0.9; }
+
+    pre {
+        background: #101410;
+        color: #d8f0df;
+        font-family: var(--mono);
+        font-size: 0.8rem;
+        padding: 14px;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 12px 0 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>Tes Koneksi API — SPMB Mudacil</h1>
+        <p class="subtitle">Halaman internal untuk memastikan frontend (GitHub Pages) bisa bicara dengan backend (Apps Script). Ini BUKAN landing page pendaftaran.</p>
+        <div class="notice" id="peringatanConfig" style="display:none;">
+            ⚠️ <code>APP_CONFIG.apiUrl</code> di <code>config.js</code> masih placeholder. Isi dulu dengan URL Web App hasil Deploy sebelum tes ini bisa jalan.
+        </div>
+    </header>
+
+    <section class="panel">
+        <h2>1. Gerbang Pendaftaran (action: cekStatus)</h2>
+        <div id="hasilCekStatus">
+            <div class="baris"><span class="label">Status</span><span class="status-pill loading" id="pillCekStatus">memuat…</span></div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>2. CONFIG (action: getConfig)</h2>
+        <div id="hasilGetConfig">
+            <div class="baris"><span class="label">Status</span><span class="status-pill loading" id="pillGetConfig">memuat…</span></div>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>3. Tes action lain secara manual</h2>
+        <p class="subtitle" style="margin-bottom:12px;">Hanya action PUBLIK yang bisa dites di sini (tidak butuh token login).</p>
+        <div class="aksi-cepat">
+            <button data-action="cekStatus">cekStatus</button>
+            <button data-action="getConfig">getConfig</button>
+            <button data-action="getReferensiSekolah">getReferensiSekolah</button>
+            <button data-action="getPengumuman">getPengumuman</button>
+            <button class="utama" id="tombolUlangi">Jalankan ulang semua tes</button>
+        </div>
+        <pre id="outputManual">(hasil action yang diklik akan muncul di sini)</pre>
+    </section>
+</div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/api.js"></script>
+<script>
+    function tampilkanPill(elId, ok) {
+        const el = document.getElementById(elId);
+        el.className = "status-pill " + (ok ? "ok" : "fail");
+        el.textContent = ok ? "OK" : "GAGAL";
+    }
+
+    function baris(label, nilai) {
+        return '<div class="baris"><span class="label">' + label + '</span><span class="nilai">' + nilai + '</span></div>';
+    }
+
+    async function jalankanCekStatus() {
+        try {
+            const res = await API.cekStatus();
+            tampilkanPill("pillCekStatus", res.ok);
+            if (res.ok && res.data) {
+                document.getElementById("hasilCekStatus").innerHTML =
+                    baris("Status", res.data.status) +
+                    baris("Gelombang aktif", res.data.gelombang) +
+                    baris("Tahun ajaran", res.data.tahunAjaran + " (" + res.data.tahunAjaranPendek + ")");
+            } else {
+                document.getElementById("hasilCekStatus").innerHTML = baris("Pesan", res.pesan || "(tidak ada pesan)");
+            }
+        } catch (err) {
+            tampilkanPill("pillCekStatus", false);
+            document.getElementById("hasilCekStatus").innerHTML = baris("Error jaringan", err.message);
+        }
+    }
+
+    async function jalankanGetConfig() {
+        try {
+            const res = await API.getConfig(true); // forceRefresh biar tidak kena cache client saat tes
+            tampilkanPill("pillGetConfig", res.ok);
+            if (res.ok && res.data) {
+                const jumlahKey = Object.keys(res.data).length;
+                document.getElementById("hasilGetConfig").innerHTML =
+                    baris("Jumlah KEY terbaca", jumlahKey) +
+                    baris("NAMA_APLIKASI", res.data.NAMA_APLIKASI || "(kosong)") +
+                    baris("NAMA_SEKOLAH", res.data.NAMA_SEKOLAH || "(kosong)") +
+                    baris("STATUS_PENDAFTARAN_DIBUKA", res.data.STATUS_PENDAFTARAN_DIBUKA || "(kosong)");
+            } else {
+                document.getElementById("hasilGetConfig").innerHTML = baris("Pesan", res.pesan || "(tidak ada pesan)");
+            }
+        } catch (err) {
+            tampilkanPill("pillGetConfig", false);
+            document.getElementById("hasilGetConfig").innerHTML = baris("Error jaringan", err.message);
+        }
+    }
+
+    async function jalankanSemua() {
+        document.getElementById("pillCekStatus").className = "status-pill loading";
+        document.getElementById("pillCekStatus").textContent = "memuat…";
+        document.getElementById("pillGetConfig").className = "status-pill loading";
+        document.getElementById("pillGetConfig").textContent = "memuat…";
+        await Promise.all([jalankanCekStatus(), jalankanGetConfig()]);
+    }
+
+    document.querySelectorAll(".aksi-cepat button[data-action]").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+            const action = btn.getAttribute("data-action");
+            const output = document.getElementById("outputManual");
+            output.textContent = "Memanggil " + action + "…";
+            try {
+                let res;
+                if (action === "cekStatus") res = await API.cekStatus();
+                else if (action === "getConfig") res = await API.getConfig(true);
+                else if (action === "getReferensiSekolah") res = await API.getReferensiSekolah(true);
+                else if (action === "getPengumuman") res = await API.getPengumuman();
+                output.textContent = JSON.stringify(res, null, 2);
+            } catch (err) {
+                output.textContent = "Error jaringan: " + err.message;
+            }
+        });
+    });
+
+    document.getElementById("tombolUlangi").addEventListener("click", jalankanSemua);
+
+    if (!window.APP_CONFIG || !APP_CONFIG.apiUrl || APP_CONFIG.apiUrl.indexOf("GANTI_DENGAN") !== -1) {
+        document.getElementById("peringatanConfig").style.display = "block";
+    } else {
+        jalankanSemua();
+    }
+</script>
+</body>
+</html>
