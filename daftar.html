@@ -1,1 +1,478 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Formulir Pendaftaran — SPMB Mudacil</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+    .catatan-prototype {
+        background: #fff8e6;
+        border: 1px solid #f0dfa8;
+        color: #6b5510;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 0.82rem;
+        margin-bottom: 18px;
+    }
+    .kotak-manual { margin-top: 8px; display: none; }
+    .kotak-manual.tampil { display: block; }
+    pre.hasil-draft {
+        background: #101410; color: #d8f0df; font-size: 0.78rem;
+        padding: 14px; border-radius: 8px; overflow-x: auto;
+        white-space: pre-wrap; word-break: break-all; margin-top: 16px;
+    }
+</style>
+</head>
+<body>
+<div class="bungkus">
+    <div class="kop">
+        <div class="lambang"></div>
+        <div>
+            <div class="nama-sistem" id="txtNamaAplikasi">SPMB Mudacil</div>
+            <div class="nama-sekolah" id="txtNamaSekolah">SMP Muhammadiyah 2 Cilacap</div>
+        </div>
+    </div>
 
+    <div class="catatan-prototype">
+        🧪 Ini prototype — alur &amp; koneksi API sudah nyata, tapi validasi &amp; desain belum final. Step 2-4 belum dibangun.
+    </div>
+
+    <div id="areaMuat" class="pemuat">Memeriksa status pendaftaran…</div>
+    <div id="areaKonten" style="display:none;"></div>
+</div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/api.js"></script>
+<script>
+    const KUNCI_DRAFT = "SPMB_DRAFT_2627_V1";
+    let draft = {};
+    let langkahSaatIni = 0; // 0 = landing, 1..4 = step wizard
+    let cfgPublik = {};
+
+    // -----------------------------------------------------------------
+    // BOOTSTRAP
+    // -----------------------------------------------------------------
+    async function mulai() {
+        try {
+            const [resStatus, resConfig] = await Promise.all([API.cekStatus(), API.getConfig()]);
+
+            if (!resStatus.ok) {
+                tampilkanErrorFatal("Tidak bisa memeriksa status pendaftaran: " + resStatus.pesan);
+                return;
+            }
+            cfgPublik = (resConfig.ok && resConfig.data) ? resConfig.data : {};
+            if (cfgPublik.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").textContent = cfgPublik.NAMA_APLIKASI;
+            if (cfgPublik.NAMA_SEKOLAH) document.getElementById("txtNamaSekolah").textContent = cfgPublik.NAMA_SEKOLAH;
+
+            // Gerbang (Bagian 5): halaman ini SELALU alur pendaftar BARU,
+            // jadi status "Tidak" ATAU "Offline" dua-duanya mengalihkan ke form_tutup.html.
+            // (Server tetap mengulang cek ini saat submitPendaftaran — ini cuma UX.)
+            if (resStatus.data.status === "Tidak" || resStatus.data.status === "Offline") {
+                window.location.href = "form_tutup.html";
+                return;
+            }
+
+            muatDraftDariLocalStorage();
+            document.getElementById("areaMuat").style.display = "none";
+            document.getElementById("areaKonten").style.display = "block";
+            render();
+        } catch (err) {
+            tampilkanErrorFatal("Error jaringan: " + err.message);
+        }
+    }
+
+    function tampilkanErrorFatal(pesan) {
+        document.getElementById("areaMuat").innerHTML =
+            "<div class=\"pesan-error-umum tampil\">" + pesan + "<br><br>Coba muat ulang halaman.</div>";
+    }
+
+    // -----------------------------------------------------------------
+    // DRAFT (Bagian 9: autosave localStorage, dihapus HANYA kalau submit sukses)
+    // -----------------------------------------------------------------
+    function muatDraftDariLocalStorage() {
+        try {
+            const raw = localStorage.getItem(KUNCI_DRAFT);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                draft = parsed.draft || {};
+                langkahSaatIni = parsed.langkah || 1;
+            } else {
+                langkahSaatIni = 1;
+            }
+        } catch (err) {
+            langkahSaatIni = 1;
+        }
+    }
+
+    function simpanDraft() {
+        localStorage.setItem(KUNCI_DRAFT, JSON.stringify({ draft: draft, langkah: langkahSaatIni }));
+    }
+
+    function hapusDraft() {
+        localStorage.removeItem(KUNCI_DRAFT);
+        draft = {};
+        langkahSaatIni = 1;
+    }
+
+    // -----------------------------------------------------------------
+    // RENDER ROUTER
+    // -----------------------------------------------------------------
+    function render() {
+        const area = document.getElementById("areaKonten");
+        if (langkahSaatIni === 0) area.innerHTML = htmlLanding();
+        else area.innerHTML = htmlIndikatorLangkah() + htmlStep1();
+
+        if (langkahSaatIni === 1) setupStep1();
+    }
+
+    // -----------------------------------------------------------------
+    // STEP 0 — LANDING (info gelombang/biaya/jadwal + 2 tombol, Bagian 9)
+    // -----------------------------------------------------------------
+    function htmlLanding() {
+        const biayaDaftar = cfgPublik.BIAYA_PENDAFTARAN || "0";
+        const biayaDpMin = cfgPublik.BIAYA_DP_MIN || "0";
+        const tahunAjaran = cfgPublik.TAHUN_AJARAN || "";
+
+        return `
+            <h1>Formulir Pendaftaran Murid Baru</h1>
+            <p class="teks-lembut">Tahun Ajaran ${tahunAjaran}</p>
+            <div class="kartu-info">
+                <div class="baris-info"><span class="label">Biaya pendaftaran</span><span class="nilai">Rp ${biayaDaftar}</span></div>
+                <div class="baris-info"><span class="label">DP minimal</span><span class="nilai">Rp ${biayaDpMin}</span></div>
+            </div>
+            <div class="tombol-baris">
+                <button class="utama" id="btnDaftarBaru">Daftar Baru</button>
+            </div>
+            <p style="text-align:center; margin-top:14px;">
+                <a href="login.html?panel=pendaftar" class="teks-lembut" style="text-decoration:underline;">Sudah pernah daftar? Login di sini</a>
+            </p>
+        `;
+    }
+
+    document.addEventListener("click", function (e) {
+        if (e.target && e.target.id === "btnDaftarBaru") {
+            langkahSaatIni = 1;
+            simpanDraft();
+            render();
+        }
+    });
+
+    // -----------------------------------------------------------------
+    // INDIKATOR LANGKAH (step 1-4)
+    // -----------------------------------------------------------------
+    function htmlIndikatorLangkah() {
+        let titik = "";
+        for (let i = 1; i <= 4; i++) {
+            titik += `<div class="titik ${i < langkahSaatIni ? "selesai" : (i === langkahSaatIni ? "aktif" : "")}"></div>`;
+        }
+        const namaLangkah = ["", "Data Diri Calon Siswa", "Data Orang Tua/Wali", "Pilihan Sekolah", "Ringkasan & Kirim"];
+        return `<div class="indikator-langkah">${titik}</div><div class="label-langkah">Langkah ${langkahSaatIni} dari 4 — ${namaLangkah[langkahSaatIni]}</div>`;
+    }
+
+    // -----------------------------------------------------------------
+    // STEP 1 — DATA DIRI CALON SISWA (Bagian 6.3 & 9)
+    // -----------------------------------------------------------------
+    function htmlStep1() {
+        return `
+            <h2>Data Diri Calon Siswa</h2>
+
+            <div class="field">
+                <label>Nama Lengkap</label>
+                <input type="text" id="f_namaLengkap" required>
+            </div>
+
+            <div class="grup-2kolom">
+                <div class="field">
+                    <label>NISN <span class="opsional">(10 digit)</span></label>
+                    <input type="text" id="f_nisn" inputmode="numeric" maxlength="10" pattern="\\d{10}" required>
+                    <div class="error-field">NISN harus 10 digit angka.</div>
+                </div>
+                <div class="field">
+                    <label>No. HP <span class="opsional">(untuk login &amp; notifikasi)</span></label>
+                    <input type="text" id="f_noHp" inputmode="numeric" maxlength="14" placeholder="08xxxxxxxxxx" required>
+                    <div class="error-field">Format No HP harus 08xxxxxxxxxx.</div>
+                </div>
+            </div>
+
+            <label>Email <span class="opsional">(opsional, bisa dipakai login Google)</span></label>
+            <input type="text" id="f_email">
+
+            <label>Jenis Kelamin</label>
+            <div class="pilihan-radio">
+                <label><input type="radio" name="jk" value="Laki-laki"><span>Laki-laki</span></label>
+                <label><input type="radio" name="jk" value="Perempuan"><span>Perempuan</span></label>
+            </div>
+
+            <div class="grup-2kolom">
+                <div class="field">
+                    <label>Tempat Lahir</label>
+                    <input type="text" id="f_tempatLahir" required>
+                </div>
+                <div class="field">
+                    <label>Tanggal Lahir</label>
+                    <input type="date" id="f_tanggalLahir" required>
+                </div>
+            </div>
+
+            <label>Asal Sekolah</label>
+            <select id="f_asalSekolah"><option value="">Memuat daftar sekolah…</option></select>
+            <div class="kotak-manual" id="kotakManualSekolah">
+                <input type="text" id="f_asalSekolahManual" placeholder="Tulis nama sekolah asal">
+            </div>
+
+            <h3 style="margin-top:26px;">Alamat</h3>
+            <label>Jalan / RT / RW</label>
+            <input type="text" id="f_jalan" placeholder="Jl. Mawar No.5 RT 02 RW 03" required>
+
+            <div class="grup-2kolom">
+                <div class="field">
+                    <label>Kecamatan</label>
+                    <select id="f_kecamatan"><option value="">Memuat…</option></select>
+                    <div class="kotak-manual" id="kotakManualKecamatan">
+                        <input type="text" id="f_kecamatanManual" placeholder="Tulis nama kecamatan">
+                    </div>
+                </div>
+                <div class="field">
+                    <label>Desa/Kelurahan</label>
+                    <select id="f_desa"><option value="">Pilih kecamatan dulu</option></select>
+                    <div class="kotak-manual" id="kotakManualDesa">
+                        <input type="text" id="f_desaManual" placeholder="Tulis nama desa/kelurahan">
+                    </div>
+                </div>
+            </div>
+
+            <div class="grup-2kolom">
+                <div class="field">
+                    <label>Kabupaten/Kota</label>
+                    <input type="text" id="f_kabupaten" value="Kabupaten Cilacap" required>
+                </div>
+                <div class="field">
+                    <label>Kode Pos</label>
+                    <input type="text" id="f_kodePos" inputmode="numeric" maxlength="5" pattern="\\d{5}">
+                </div>
+            </div>
+
+            <div class="grup-2kolom">
+                <div class="field">
+                    <label>Anak ke-</label>
+                    <input type="text" id="f_anakKe" inputmode="numeric" maxlength="2">
+                </div>
+                <div class="field">
+                    <label>Jumlah Saudara</label>
+                    <input type="text" id="f_jumlahSaudara" inputmode="numeric" maxlength="2">
+                </div>
+            </div>
+
+            <div class="pesan-error-umum" id="errorStep1"></div>
+
+            <div class="tombol-baris">
+                <button id="btnKembaliStep1">Kembali</button>
+                <button class="utama" id="btnLanjutStep1">Lanjut</button>
+            </div>
+
+            <pre class="hasil-draft" id="hasilDraftStep1" style="display:none;"></pre>
+        `;
+    }
+
+    async function setupStep1() {
+        // Isi ulang dari draft kalau sudah pernah diisi sebelumnya.
+        const d = draft;
+        if (d.namaLengkap) document.getElementById("f_namaLengkap").value = d.namaLengkap;
+        if (d.nisn) document.getElementById("f_nisn").value = d.nisn;
+        if (d.noHp) document.getElementById("f_noHp").value = d.noHp;
+        if (d.email) document.getElementById("f_email").value = d.email;
+        if (d.jenisKelamin) {
+            const r = document.querySelector('input[name="jk"][value="' + d.jenisKelamin + '"]');
+            if (r) r.checked = true;
+        }
+        if (d._tempatLahirMentah) document.getElementById("f_tempatLahir").value = d._tempatLahirMentah;
+        if (d._tanggalLahirMentah) document.getElementById("f_tanggalLahir").value = d._tanggalLahirMentah;
+        if (d.jalan) document.getElementById("f_jalan").value = d.jalan;
+        if (d.kabupaten) document.getElementById("f_kabupaten").value = d.kabupaten;
+        if (d.kodePos) document.getElementById("f_kodePos").value = d.kodePos;
+        if (d.anakKe) document.getElementById("f_anakKe").value = d.anakKe;
+        if (d.jumlahSaudara) document.getElementById("f_jumlahSaudara").value = d.jumlahSaudara;
+
+        // --- Asal sekolah ---
+        const selSekolah = document.getElementById("f_asalSekolah");
+        const kotakManualSekolah = document.getElementById("kotakManualSekolah");
+        try {
+            const res = await API.getReferensiSekolah();
+            const daftar = (res.ok && res.data) ? res.data : [];
+            selSekolah.innerHTML = '<option value="">— Pilih sekolah —</option>' +
+                daftar.map(function (s) { return `<option value="${s.NAMA_SEKOLAH}">${s.NAMA_SEKOLAH}</option>`; }).join("") +
+                '<option value="__LAINNYA__">Sekolah tidak ada di daftar / luar Cilacap (isi manual)</option>';
+            if (d._asalSekolahManual) {
+                selSekolah.value = "__LAINNYA__";
+                kotakManualSekolah.classList.add("tampil");
+                document.getElementById("f_asalSekolahManual").value = d._asalSekolahManual;
+            } else if (d.asalSekolah) {
+                selSekolah.value = d.asalSekolah;
+            }
+        } catch (err) {
+            selSekolah.innerHTML = '<option value="__LAINNYA__">Gagal memuat daftar — isi manual</option>';
+            selSekolah.value = "__LAINNYA__";
+            kotakManualSekolah.classList.add("tampil");
+        }
+        selSekolah.addEventListener("change", function () {
+            kotakManualSekolah.classList.toggle("tampil", selSekolah.value === "__LAINNYA__");
+        });
+
+        // --- Kecamatan -> Desa (cascading, Bagian 15) ---
+        const selKecamatan = document.getElementById("f_kecamatan");
+        const kotakManualKecamatan = document.getElementById("kotakManualKecamatan");
+        const selDesa = document.getElementById("f_desa");
+        const kotakManualDesa = document.getElementById("kotakManualDesa");
+
+        async function muatKecamatan() {
+            try {
+                const res = await API.getWilayahLokal("kecamatan", "");
+                const daftar = (res.ok && res.data) ? res.data : [];
+                selKecamatan.innerHTML = '<option value="">— Pilih kecamatan —</option>' +
+                    daftar.map(function (w) { return `<option value="${w.KODE}" data-nama="${w.NAMA}">${w.NAMA}</option>`; }).join("") +
+                    '<option value="__LAINNYA__">Kecamatan tidak ada di daftar (isi manual)</option>';
+                if (d._kecamatanManual) {
+                    selKecamatan.value = "__LAINNYA__";
+                    kotakManualKecamatan.classList.add("tampil");
+                    document.getElementById("f_kecamatanManual").value = d._kecamatanManual;
+                } else if (d._kecamatanKode) {
+                    selKecamatan.value = d._kecamatanKode;
+                    muatDesa(d._kecamatanKode);
+                }
+            } catch (err) {
+                selKecamatan.innerHTML = '<option value="__LAINNYA__">Gagal memuat — isi manual</option>';
+                selKecamatan.value = "__LAINNYA__";
+                kotakManualKecamatan.classList.add("tampil");
+            }
+        }
+
+        async function muatDesa(kodeKecamatan) {
+            selDesa.innerHTML = '<option value="">Memuat…</option>';
+            try {
+                const res = await API.getWilayahLokal("desa", kodeKecamatan);
+                const daftar = (res.ok && res.data) ? res.data : [];
+                selDesa.innerHTML = '<option value="">— Pilih desa/kelurahan —</option>' +
+                    daftar.map(function (w) { return `<option value="${w.NAMA}">${w.NAMA}</option>`; }).join("") +
+                    '<option value="__LAINNYA__">Tidak ada di daftar (isi manual)</option>';
+                if (d._desaManual) {
+                    selDesa.value = "__LAINNYA__";
+                    kotakManualDesa.classList.add("tampil");
+                    document.getElementById("f_desaManual").value = d._desaManual;
+                } else if (d.desa) {
+                    selDesa.value = d.desa;
+                }
+            } catch (err) {
+                selDesa.innerHTML = '<option value="__LAINNYA__">Gagal memuat — isi manual</option>';
+            }
+        }
+
+        selKecamatan.addEventListener("change", function () {
+            const manual = selKecamatan.value === "__LAINNYA__";
+            kotakManualKecamatan.classList.toggle("tampil", manual);
+            if (!manual && selKecamatan.value) muatDesa(selKecamatan.value);
+        });
+        selDesa.addEventListener("change", function () {
+            kotakManualDesa.classList.toggle("tampil", selDesa.value === "__LAINNYA__");
+        });
+
+        muatKecamatan();
+
+        document.getElementById("btnKembaliStep1").addEventListener("click", function () {
+            langkahSaatIni = 0;
+            simpanDraft();
+            render();
+        });
+        document.getElementById("btnLanjutStep1").addEventListener("click", prosesLanjutStep1);
+    }
+
+    function prosesLanjutStep1() {
+        const ambil = function (id) { return document.getElementById(id).value.trim(); };
+        const errorBox = document.getElementById("errorStep1");
+        errorBox.classList.remove("tampil");
+        errorBox.textContent = "";
+
+        const namaLengkap = ambil("f_namaLengkap");
+        const nisn = ambil("f_nisn");
+        const noHp = ambil("f_noHp");
+        const jkEl = document.querySelector('input[name="jk"]:checked');
+        const tempatLahir = ambil("f_tempatLahir");
+        const tanggalLahir = ambil("f_tanggalLahir");
+        const jalan = ambil("f_jalan");
+        const kabupaten = ambil("f_kabupaten");
+        const kodePos = ambil("f_kodePos");
+
+        const kesalahan = [];
+        if (!namaLengkap) kesalahan.push("Nama lengkap wajib diisi.");
+        if (!/^\d{10}$/.test(nisn)) kesalahan.push("NISN harus 10 digit angka.");
+        if (!/^08\d{8,11}$/.test(noHp)) kesalahan.push("Format No HP tidak valid (08xxxxxxxxxx).");
+        if (!jkEl) kesalahan.push("Jenis kelamin wajib dipilih.");
+        if (!tempatLahir || !tanggalLahir) kesalahan.push("Tempat & tanggal lahir wajib diisi.");
+        if (!jalan) kesalahan.push("Alamat (Jalan/RT/RW) wajib diisi.");
+        if (!kabupaten) kesalahan.push("Kabupaten/Kota wajib diisi.");
+
+        // Asal sekolah
+        const selSekolah = document.getElementById("f_asalSekolah");
+        const asalSekolahManual = ambil("f_asalSekolahManual");
+        const asalSekolahFinal = selSekolah.value === "__LAINNYA__" ? asalSekolahManual : selSekolah.value;
+        if (!asalSekolahFinal) kesalahan.push("Asal sekolah wajib diisi.");
+
+        // Kecamatan / Desa
+        const selKecamatan = document.getElementById("f_kecamatan");
+        const kecamatanManual = ambil("f_kecamatanManual");
+        const kecamatanNamaFinal = selKecamatan.value === "__LAINNYA__"
+            ? kecamatanManual
+            : (selKecamatan.selectedOptions[0] ? selKecamatan.selectedOptions[0].getAttribute("data-nama") : "");
+
+        const selDesa = document.getElementById("f_desa");
+        const desaManual = ambil("f_desaManual");
+        const desaFinal = selDesa.value === "__LAINNYA__" ? desaManual : selDesa.value;
+
+        if (!kecamatanNamaFinal) kesalahan.push("Kecamatan wajib diisi.");
+        if (!desaFinal) kesalahan.push("Desa/Kelurahan wajib diisi.");
+
+        if (kesalahan.length) {
+            errorBox.innerHTML = kesalahan.join("<br>");
+            errorBox.classList.add("tampil");
+            return;
+        }
+
+        // Rakit ALAMAT jadi 1 string sesuai format Bagian 6.7 (kerja frontend, Bagian 18.2)
+        const alamatGabungan = [jalan, desaFinal, kecamatanNamaFinal, kabupaten, kodePos].join("; ");
+        // Rakit TEMPAT_TGL_LAHIR sesuai format yang diharapkan Validator.gs backend ("Tempat, YYYY-MM-DD")
+        const tempatTglLahirGabungan = tempatLahir + ", " + tanggalLahir;
+
+        draft = Object.assign(draft, {
+            namaLengkap: namaLengkap,
+            nisn: nisn,
+            noHp: noHp,
+            email: ambil("f_email"),
+            jenisKelamin: jkEl.value,
+            tempatTglLahir: tempatTglLahirGabungan,
+            _tempatLahirMentah: tempatLahir,
+            _tanggalLahirMentah: tanggalLahir,
+            asalSekolah: asalSekolahFinal,
+            _asalSekolahManual: selSekolah.value === "__LAINNYA__" ? asalSekolahManual : "",
+            alamat: alamatGabungan,
+            jalan: jalan,
+            desa: desaFinal,
+            _desaManual: selDesa.value === "__LAINNYA__" ? desaManual : "",
+            _kecamatanKode: selKecamatan.value !== "__LAINNYA__" ? selKecamatan.value : "",
+            _kecamatanManual: selKecamatan.value === "__LAINNYA__" ? kecamatanManual : "",
+            kabupaten: kabupaten,
+            kodePos: kodePos,
+            anakKe: ambil("f_anakKe"),
+            jumlahSaudara: ambil("f_jumlahSaudara"),
+        });
+        simpanDraft();
+
+        // Step 2-4 belum dibangun — tampilkan hasil rakitan draft utk verifikasi.
+        const hasilBox = document.getElementById("hasilDraftStep1");
+        hasilBox.style.display = "block";
+        hasilBox.textContent = "✅ Data Step 1 tersimpan ke draft (localStorage).\nStep 2 (Data Orang Tua/Wali) menyusul.\n\nData yang akan dikirim ke server nanti:\n" + JSON.stringify(draft, null, 2);
+    }
+
+    mulai();
+</script>
+</body>
+</html>
