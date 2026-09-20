@@ -1,1 +1,168 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login — SPMB Mudacil</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<div class="bungkus">
+    <div class="kop">
+        <div class="lambang">S</div>
+        <div>
+            <div class="nama-sistem" id="txtNamaAplikasi">SPMB<span>Mudacil</span></div>
+            <div class="nama-sekolah" id="txtNamaSekolah">SMP Muhammadiyah 2 Cilacap</div>
+        </div>
+    </div>
 
+    <div class="isi">
+        <a class="tombol teks" href="daftar.html" style="padding-left:0;"></a>
+
+        <div style="text-align:center; margin:8px 0 18px;">
+            <h1>Login Dashboard</h1>
+            <p class="teks-lembut">Masukkan data yang Anda dapatkan saat pendaftaran.</p>
+        </div>
+
+        <div class="pilihan-radio" style="margin-bottom:18px;">
+            <label id="tabPendaftarBtn"><input type="radio" name="tabPanel" value="pendaftar" checked><span>Pendaftar</span></label>
+            <label id="tabSekolahBtn"><input type="radio" name="tabPanel" value="sekolah"><span>Petugas/Admin</span></label>
+        </div>
+
+        <div id="panelPendaftar">
+            <label style="margin-top:0;">Nomor HP Terdaftar</label>
+            <input type="text" id="f_hp" inputmode="numeric" maxlength="14" placeholder="08xxxxxxxxxx">
+
+            <label>Nomor Pendaftaran</label>
+            <input type="text" id="f_noPendaftaran" placeholder="Contoh: 2627-1-0001">
+
+            <label>PIN Rahasia (6 digit)</label>
+            <input type="password" id="f_pin" maxlength="6" inputmode="numeric" placeholder="••••••">
+
+            <div class="pesan-error-umum" id="errorLogin"></div>
+
+            <button class="utama blok" id="btnLogin" style="margin-top:18px;">Masuk Dashboard</button>
+        </div>
+
+        <div id="panelSekolah" style="display:none;">
+            <label style="margin-top:0;">Email</label>
+            <input type="text" id="f_email" placeholder="nama@sekolah.id">
+
+            <label>Password</label>
+            <input type="password" id="f_password">
+
+            <label>PIN (6 digit)</label>
+            <input type="password" id="f_pinSekolah" maxlength="6" inputmode="numeric" placeholder="••••••">
+
+            <div class="pesan-error-umum" id="errorLoginSekolah"></div>
+
+            <button class="utama blok" id="btnLoginSekolah" style="margin-top:18px;">Masuk Dashboard Sekolah</button>
+        </div>
+    </div>
+</div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
+<script>
+    // Sudah login & sesi masih berlaku? Langsung ke dashboard, jangan
+    // tampilkan form login lagi.
+    if (API.sesiInfo().adaToken) {
+        window.location.href = API.sesiInfo().role === "pendaftar" ? "dashboard.html" : "sekolah.html";
+    }
+
+    // Panah "kembali" pakai ikon SVG (di-render via JS, bukan literal ${})
+    document.querySelector('a.tombol.teks').innerHTML = UI.ikon("panahKiri") + " Kembali ke Beranda";
+
+    // Prefill tab dari query string (?panel=sekolah), dipakai dari
+    // form_tutup.html yang punya 2 tombol terpisah.
+    const paramsUrl = new URLSearchParams(window.location.search);
+    if (paramsUrl.get("panel") === "sekolah") {
+        document.querySelector('input[name="tabPanel"][value="sekolah"]').checked = true;
+    }
+
+    function terapkanTab() {
+        const aktif = document.querySelector('input[name="tabPanel"]:checked').value;
+        document.getElementById("panelPendaftar").style.display = aktif === "pendaftar" ? "block" : "none";
+        document.getElementById("panelSekolah").style.display = aktif === "sekolah" ? "block" : "none";
+    }
+    document.querySelectorAll('input[name="tabPanel"]').forEach(function (r) { r.addEventListener("change", terapkanTab); });
+    terapkanTab();
+
+    async function muatNamaAplikasi() {
+        try {
+            const res = await API.getConfig();
+            if (res.ok && res.data) {
+                if (res.data.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").innerHTML = res.data.NAMA_APLIKASI;
+                if (res.data.NAMA_SEKOLAH) document.getElementById("txtNamaSekolah").textContent = res.data.NAMA_SEKOLAH;
+            }
+        } catch (err) { /* bukan blocking */ }
+    }
+    muatNamaAplikasi();
+
+    document.getElementById("btnLogin").addEventListener("click", async function () {
+        const hp = document.getElementById("f_hp").value.trim();
+        const noPendaftaran = document.getElementById("f_noPendaftaran").value.trim();
+        const pin = document.getElementById("f_pin").value.trim();
+        const errorBox = document.getElementById("errorLogin");
+        errorBox.classList.remove("tampil");
+
+        if (!hp || !noPendaftaran || !pin) {
+            errorBox.textContent = "Mohon lengkapi No. HP, No. Pendaftaran, dan PIN Anda.";
+            errorBox.classList.add("tampil");
+            return;
+        }
+
+        const btn = document.getElementById("btnLogin");
+        btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Memeriksa…";
+
+        try {
+            const res = await API.login(hp, noPendaftaran, pin);
+            if (!res.ok) {
+                errorBox.textContent = res.pesan || "Login gagal.";
+                errorBox.classList.add("tampil");
+                btn.disabled = false; btn.textContent = "Masuk Dashboard";
+                return;
+            }
+            window.location.href = "dashboard.html";
+        } catch (err) {
+            errorBox.textContent = "Error jaringan: " + err.message;
+            errorBox.classList.add("tampil");
+            btn.disabled = false; btn.textContent = "Masuk Dashboard";
+        }
+    });
+
+    document.getElementById("btnLoginSekolah").addEventListener("click", async function () {
+        const email = document.getElementById("f_email").value.trim();
+        const password = document.getElementById("f_password").value;
+        const pin = document.getElementById("f_pinSekolah").value.trim();
+        const errorBox = document.getElementById("errorLoginSekolah");
+        errorBox.classList.remove("tampil");
+
+        if (!email || !password || !pin) {
+            errorBox.textContent = "Mohon lengkapi Email, Password, dan PIN Anda.";
+            errorBox.classList.add("tampil");
+            return;
+        }
+
+        const btn = document.getElementById("btnLoginSekolah");
+        btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Memeriksa…";
+
+        try {
+            const res = await API.loginSekolah(email, password, pin);
+            if (!res.ok) {
+                errorBox.textContent = res.pesan || "Login gagal.";
+                errorBox.classList.add("tampil");
+                btn.disabled = false; btn.textContent = "Masuk Dashboard Sekolah";
+                return;
+            }
+            window.location.href = "sekolah.html";
+        } catch (err) {
+            errorBox.textContent = "Error jaringan: " + err.message;
+            errorBox.classList.add("tampil");
+            btn.disabled = false; btn.textContent = "Masuk Dashboard Sekolah";
+        }
+    });
+</script>
+</body>
+</html>

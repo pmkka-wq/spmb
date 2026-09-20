@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pendaftaran Berhasil — SPMB Mudacil</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<div class="bungkus">
+    <div class="kop">
+        <div class="lambang">S</div>
+        <div>
+            <div class="nama-sistem" id="txtNamaAplikasi">SPMB<span>Mudacil</span></div>
+            <div class="nama-sekolah" id="txtNamaSekolah">SMP Muhammadiyah 2 Cilacap</div>
+        </div>
+    </div>
+
+    <div id="areaMuat" class="pemuat"><div class="spinner"></div>Memuat…</div>
+    <div id="areaKonten" class="isi" style="display:none;"></div>
+</div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
+<script>
+    let akun = null;
+    let cfgPublik = {};
+
+    async function mulai() {
+        const raw = sessionStorage.getItem("SPMB_AKUN_BARU");
+        if (!raw) {
+            // Halaman ini cuma valid tepat setelah submit — kalau diakses
+            // langsung/reload, arahkan ke login supaya PIN tidak "hilang"
+            // dianggap masih bisa dilihat ulang (PIN memang tampil sekali saja).
+            window.location.href = "login.html";
+            return;
+        }
+        akun = JSON.parse(raw);
+
+        try {
+            const resConfig = await API.getConfig();
+            cfgPublik = (resConfig.ok && resConfig.data) ? resConfig.data : {};
+            if (cfgPublik.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").innerHTML = cfgPublik.NAMA_APLIKASI;
+            if (cfgPublik.NAMA_SEKOLAH) document.getElementById("txtNamaSekolah").textContent = cfgPublik.NAMA_SEKOLAH;
+        } catch (err) { /* CONFIG gagal dimuat bukan blocking di halaman ini */ }
+
+        document.getElementById("areaMuat").style.display = "none";
+        document.getElementById("areaKonten").style.display = "block";
+        render();
+    }
+
+    function render() {
+        const area = document.getElementById("areaKonten");
+        area.innerHTML = `
+            <div style="text-align:center; margin-bottom:16px;">
+                <div style="width:52px; height:52px; border-radius:14px; background:var(--hijau-600); color:#fff; margin:0 auto 10px; display:flex; align-items:center; justify-content:center;">${UI.ikon("cek")}</div>
+                <h1>Pendaftaran Berhasil!</h1>
+                <p class="teks-lembut">Selamat, ${UI.escapeHtml(akun.namaLengkap || "Calon Siswa")}. Formulir Anda sudah tersimpan di sistem.</p>
+            </div>
+
+            <div class="kartu-akun-gelap">
+                <div class="label-mini">SIMPAN &amp; SCREENSHOT AKUN INI!</div>
+                <div style="margin-top:10px;">
+                    <div class="teks-kecil" style="color:#a9bdb2;">Nomor Pendaftaran</div>
+                    <div class="nilai-besar">${UI.escapeHtml(akun.noPendaftaran)}</div>
+                </div>
+                <div class="grid-2" style="margin-top:12px;">
+                    <div>
+                        <div class="teks-kecil" style="color:#a9bdb2;">Nomor HP</div>
+                        <div style="font-weight:800;">${UI.escapeHtml(akun.noHp || "-")}</div>
+                    </div>
+                    <div>
+                        <div class="teks-kecil" style="color:#a9bdb2;">PIN Rahasia</div>
+                        <div class="nilai-pin">${UI.escapeHtml(akun.pin)}</div>
+                    </div>
+                </div>
+                <button type="button" class="utama blok" id="btnSalin" style="margin-top:14px;">${UI.ikon("salin")} Salin Info Akun</button>
+            </div>
+
+            <div id="areaSurvei"></div>
+
+            ${htmlTombolWA()}
+
+            <div style="margin-top:18px;">
+                <a class="tombol utama blok" href="login.html">Masuk ke Dashboard Pendaftar ${UI.ikon("panah")}</a>
+            </div>
+        `;
+
+        document.getElementById("btnSalin").addEventListener("click", function () {
+            const teks = "INFORMASI AKUN SPMB\nNo. Pendaftaran: " + akun.noPendaftaran + "\nNo. HP: " + akun.noHp + "\nPIN Login: " + akun.pin;
+            navigator.clipboard.writeText(teks).then(function () { UI.toast("Info akun berhasil disalin."); });
+        });
+
+        if (cfgPublik.FITUR_SURVEI_AKTIF === "Ya") renderSurvei();
+    }
+
+    function htmlTombolWA() {
+        const admin1Nama = cfgPublik.ADMIN_WA_1_NAMA, admin1No = cfgPublik.ADMIN_WA_1_NOMOR;
+        const admin2Nama = cfgPublik.ADMIN_WA_2_NAMA, admin2No = cfgPublik.ADMIN_WA_2_NOMOR;
+        if (!admin1No && !admin2No) return "";
+        let tombol = "";
+        if (admin1No) tombol += `<a class="tombol tombol-wa" target="_blank" rel="noreferrer" href="${UI.linkWA(admin1No, admin1Nama)}">${UI.ikon("wa")} ${UI.escapeHtml(admin1Nama || "WA Admin 1")}</a>`;
+        if (admin2No) tombol += `<a class="tombol tombol-wa" target="_blank" rel="noreferrer" href="${UI.linkWA(admin2No, admin2Nama)}">${UI.ikon("wa")} ${UI.escapeHtml(admin2Nama || "WA Admin 2")}</a>`;
+        return `<h3 style="margin-top:18px;">Butuh Bantuan?</h3><div class="tombol-wa-grid">${tombol}</div>`;
+    }
+
+    // -----------------------------------------------------------------
+    // SURVEI (Bagian 3 poin 13 & 6.10) — kartu OPSIONAL di halaman sukses,
+    // bukan bagian wizard form. Butuh login dulu (submitSurvei butuh
+    // token), jadi di sini kita login "diam-diam" pakai PIN yang baru
+    // dibuat supaya pendaftar tidak perlu isi ulang No HP/PIN cuma utk survei.
+    // -----------------------------------------------------------------
+    async function renderSurvei() {
+        const area = document.getElementById("areaSurvei");
+        const alasanList = UI.csvKeArray(cfgPublik.SURVEI_JAWABAN_ALASAN);
+        const sumberList = UI.csvKeArray(cfgPublik.SURVEI_SUMBER_INFO_LIST);
+        let petaSub = {};
+        try { petaSub = JSON.parse(cfgPublik.SURVEI_SUMBER_INFO_LIST_2 || "{}"); } catch (e) { petaSub = {}; }
+
+        let alasanTerpilih = [];
+        let sumberTerpilih = "";
+        let sudahDikirim = false;
+
+        area.innerHTML = `
+            <div class="kartu">
+                <h3>${UI.escapeHtml(cfgPublik.SURVEI_PERTANYAAN_ALASAN || "Apa yang menarik dari sekolah ini?")}</h3>
+                <div class="chip-baris" id="chipAlasan">
+                    ${alasanList.map(function (a) { return `<button type="button" class="chip" data-alasan="${UI.escapeHtml(a)}">${UI.escapeHtml(a)}</button>`; }).join("")}
+                </div>
+                <hr class="garis-pisah">
+                <h3>${UI.escapeHtml(cfgPublik.SURVEI_PERTANYAAN_SUMBER || "Dari mana Anda tahu info ini?")}</h3>
+                <select id="selSumber">
+                    <option value="">— Pilih sumber info —</option>
+                    ${sumberList.map(function (s) { return `<option value="${UI.escapeHtml(s)}">${UI.escapeHtml(s)}</option>`; }).join("")}
+                </select>
+                <div id="blokSubSumber" style="display:none;">
+                    <label id="labelSubSumber">Detail:</label>
+                    <select id="selSubSumber"><option value="">— Pilih —</option></select>
+                </div>
+                <button type="button" class="utama blok" id="btnKirimSurvei" style="margin-top:14px;">Kirim Survei</button>
+                <div class="pesan-error-umum" id="errorSurvei"></div>
+            </div>
+        `;
+
+        document.querySelectorAll("#chipAlasan .chip").forEach(function (el) {
+            el.addEventListener("click", function () {
+                const a = el.getAttribute("data-alasan");
+                const idx = alasanTerpilih.indexOf(a);
+                if (idx === -1) alasanTerpilih.push(a); else alasanTerpilih.splice(idx, 1);
+                el.classList.toggle("aktif");
+            });
+        });
+
+        const selSumber = document.getElementById("selSumber");
+        const blokSubSumber = document.getElementById("blokSubSumber");
+        const selSubSumber = document.getElementById("selSubSumber");
+        selSumber.addEventListener("change", function () {
+            sumberTerpilih = selSumber.value;
+            if (petaSub[sumberTerpilih]) {
+                document.getElementById("labelSubSumber").textContent = "Detail " + sumberTerpilih + ":";
+                selSubSumber.innerHTML = '<option value="">— Pilih —</option>' + petaSub[sumberTerpilih].map(function (s) { return `<option value="${UI.escapeHtml(s)}">${UI.escapeHtml(s)}</option>`; }).join("");
+                blokSubSumber.style.display = "block";
+            } else {
+                blokSubSumber.style.display = "none";
+            }
+        });
+
+        document.getElementById("btnKirimSurvei").addEventListener("click", async function () {
+            if (sudahDikirim) return;
+            const errorBox = document.getElementById("errorSurvei");
+            errorBox.classList.remove("tampil");
+
+            if (!alasanTerpilih.length || !sumberTerpilih) {
+                errorBox.textContent = "Mohon pilih minimal 1 alasan dan sumber info.";
+                errorBox.classList.add("tampil");
+                return;
+            }
+            if (petaSub[sumberTerpilih] && !selSubSumber.value) {
+                errorBox.textContent = "Mohon pilih detail untuk \"" + sumberTerpilih + "\".";
+                errorBox.classList.add("tampil");
+                return;
+            }
+
+            sudahDikirim = true;
+            const btn = document.getElementById("btnKirimSurvei");
+            btn.disabled = true; btn.textContent = "Mengirim…";
+
+            try {
+                // Kalau belum ada sesi aktif (kasus normal — pendaftar baru
+                // saja submit, belum login), login diam-diam dulu.
+                if (!API.sesiInfo().adaToken) {
+                    const resLogin = await API.login(akun.noHp, akun.noPendaftaran, akun.pin);
+                    if (!resLogin.ok) throw new Error(resLogin.pesan);
+                }
+                const res = await API.submitSurvei(alasanTerpilih.join(", "), sumberTerpilih, petaSub[sumberTerpilih] ? selSubSumber.value : "");
+                if (!res.ok) throw new Error(res.pesan);
+                area.innerHTML = `<div class="kartu"><div class="catatan hijau" style="margin:0;">${UI.ikon("cek")}<span>Terima kasih, survei berhasil dikirim.</span></div></div>`;
+            } catch (err) {
+                errorBox.textContent = err.message || "Gagal mengirim survei.";
+                errorBox.classList.add("tampil");
+                btn.disabled = false; btn.textContent = "Kirim Survei";
+                sudahDikirim = false;
+            }
+        });
+    }
+
+    mulai();
+</script>
+</body>
+</html>

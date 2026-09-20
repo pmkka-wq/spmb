@@ -5,50 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Formulir Pendaftaran — SPMB Mudacil</title>
 <link rel="stylesheet" href="assets/css/style.css">
-<style>
-    .catatan-prototype {
-        background: #fff8e6;
-        border: 1px solid #f0dfa8;
-        color: #6b5510;
-        border-radius: 8px;
-        padding: 10px 14px;
-        font-size: 0.82rem;
-        margin-bottom: 18px;
-    }
-    .kotak-manual { margin-top: 8px; display: none; }
-    .kotak-manual.tampil { display: block; }
-    pre.hasil-draft {
-        background: #101410; color: #d8f0df; font-size: 0.78rem;
-        padding: 14px; border-radius: 8px; overflow-x: auto;
-        white-space: pre-wrap; word-break: break-all; margin-top: 16px;
-    }
-</style>
 </head>
 <body>
 <div class="bungkus">
     <div class="kop">
-        <div class="lambang"></div>
+        <div class="lambang">S</div>
         <div>
-            <div class="nama-sistem" id="txtNamaAplikasi">SPMB Mudacil</div>
+            <div class="nama-sistem" id="txtNamaAplikasi">SPMB<span>Mudacil</span></div>
             <div class="nama-sekolah" id="txtNamaSekolah">SMP Muhammadiyah 2 Cilacap</div>
         </div>
     </div>
 
-    <div class="catatan-prototype">
-        🧪 Ini prototype — alur &amp; koneksi API sudah nyata, tapi validasi &amp; desain belum final. Step 2-4 belum dibangun.
-    </div>
-
-    <div id="areaMuat" class="pemuat">Memeriksa status pendaftaran…</div>
-    <div id="areaKonten" style="display:none;"></div>
+    <div id="areaMuat" class="pemuat"><div class="spinner"></div>Memeriksa status pendaftaran…</div>
+    <div id="areaKonten" class="isi" style="display:none;"></div>
 </div>
 
 <script src="assets/js/config.js"></script>
 <script src="assets/js/api.js"></script>
+<script src="assets/js/ui.js"></script>
 <script>
     const KUNCI_DRAFT = "SPMB_DRAFT_2627_V1";
     let draft = {};
     let langkahSaatIni = 0; // 0 = landing, 1..4 = step wizard
     let cfgPublik = {};
+    let sedangKirim = false;
 
     // -----------------------------------------------------------------
     // BOOTSTRAP
@@ -62,7 +42,7 @@
                 return;
             }
             cfgPublik = (resConfig.ok && resConfig.data) ? resConfig.data : {};
-            if (cfgPublik.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").textContent = cfgPublik.NAMA_APLIKASI;
+            if (cfgPublik.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").innerHTML = cfgPublik.NAMA_APLIKASI;
             if (cfgPublik.NAMA_SEKOLAH) document.getElementById("txtNamaSekolah").textContent = cfgPublik.NAMA_SEKOLAH;
 
             // Gerbang (Bagian 5): halaman ini SELALU alur pendaftar BARU,
@@ -84,7 +64,7 @@
 
     function tampilkanErrorFatal(pesan) {
         document.getElementById("areaMuat").innerHTML =
-            "<div class=\"pesan-error-umum tampil\">" + pesan + "<br><br>Coba muat ulang halaman.</div>";
+            "<div class=\"pesan-error-umum tampil\">" + UI.escapeHtml(pesan) + "<br><br>Coba muat ulang halaman.</div>";
     }
 
     // -----------------------------------------------------------------
@@ -120,10 +100,13 @@
     // -----------------------------------------------------------------
     function render() {
         const area = document.getElementById("areaKonten");
-        if (langkahSaatIni === 0) area.innerHTML = htmlLanding();
-        else area.innerHTML = htmlIndikatorLangkah() + htmlStep1();
+        if (langkahSaatIni === 0) { area.innerHTML = htmlLanding(); return; }
 
-        if (langkahSaatIni === 1) setupStep1();
+        const isiStep = { 1: htmlStep1, 2: htmlStep2, 3: htmlStep3, 4: htmlStep4 }[langkahSaatIni]();
+        area.innerHTML = htmlIndikatorLangkah() + isiStep;
+
+        const setup = { 1: setupStep1, 2: setupStep2, 3: setupStep3, 4: setupStep4 }[langkahSaatIni];
+        if (setup) setup();
     }
 
     // -----------------------------------------------------------------
@@ -133,21 +116,47 @@
         const biayaDaftar = cfgPublik.BIAYA_PENDAFTARAN || "0";
         const biayaDpMin = cfgPublik.BIAYA_DP_MIN || "0";
         const tahunAjaran = cfgPublik.TAHUN_AJARAN || "";
+        const gelombangNama = cfgPublik.GELOMBANG_1_NAMA || "Gelombang Aktif";
 
         return `
-            <h1>Formulir Pendaftaran Murid Baru</h1>
-            <p class="teks-lembut">Tahun Ajaran ${tahunAjaran}</p>
+            <div class="hero-gelap">
+                <span class="lencana">${UI.ikon("petir")} Pendaftaran Buka</span>
+                <h1>Penerimaan Murid Baru</h1>
+                <p>Proses 100% online. Isi data diri &amp; akademik, lalu upload berkas kapan saja dari Dashboard Pendaftar.</p>
+                <button class="utama blok" id="btnDaftarBaru">Daftar Baru Sekarang ${UI.ikon("panah")}</button>
+                <div style="height:8px;"></div>
+                <a class="tombol gelap blok" href="login.html">${UI.ikon("kunci")} Sudah Pernah Daftar? Login</a>
+            </div>
+
+            <h2 style="margin-top:20px;">Info Gelombang &amp; Biaya</h2>
             <div class="kartu-info">
-                <div class="baris-info"><span class="label">Biaya pendaftaran</span><span class="nilai">Rp ${biayaDaftar}</span></div>
-                <div class="baris-info"><span class="label">DP minimal</span><span class="nilai">Rp ${biayaDpMin}</span></div>
+                <div class="baris-info"><span class="label">Tahun Ajaran</span><span class="nilai">${UI.escapeHtml(tahunAjaran)}</span></div>
+                <div class="baris-info"><span class="label">Gelombang aktif</span><span class="nilai">${UI.escapeHtml(gelombangNama)}</span></div>
             </div>
-            <div class="tombol-baris">
-                <button class="utama" id="btnDaftarBaru">Daftar Baru</button>
+            <div class="grid-2">
+                <div class="kartu">
+                    <div class="teks-kecil">BIAYA PENDAFTARAN</div>
+                    <div style="font-weight:800; color:var(--hijau-700); margin-top:2px;">${UI.formatRupiah(biayaDaftar)}</div>
+                </div>
+                <div class="kartu">
+                    <div class="teks-kecil">DP MINIMAL</div>
+                    <div style="font-weight:800; margin-top:2px;">${UI.formatRupiah(biayaDpMin)}</div>
+                    <div class="teks-kecil">Opsional saat submit</div>
+                </div>
             </div>
-            <p style="text-align:center; margin-top:14px;">
-                <a href="login.html?panel=pendaftar" class="teks-lembut" style="text-decoration:underline;">Sudah pernah daftar? Login di sini</a>
-            </p>
+
+            ${htmlTombolWA()}
         `;
+    }
+
+    function htmlTombolWA() {
+        const admin1Nama = cfgPublik.ADMIN_WA_1_NAMA, admin1No = cfgPublik.ADMIN_WA_1_NOMOR;
+        const admin2Nama = cfgPublik.ADMIN_WA_2_NAMA, admin2No = cfgPublik.ADMIN_WA_2_NOMOR;
+        if (!admin1No && !admin2No) return "";
+        let tombol = "";
+        if (admin1No) tombol += `<a class="tombol tombol-wa" target="_blank" rel="noreferrer" href="${UI.linkWA(admin1No, admin1Nama)}">${UI.ikon("wa")} ${UI.escapeHtml(admin1Nama || "WA Admin 1")}</a>`;
+        if (admin2No) tombol += `<a class="tombol tombol-wa" target="_blank" rel="noreferrer" href="${UI.linkWA(admin2No, admin2Nama)}">${UI.ikon("wa")} ${UI.escapeHtml(admin2Nama || "WA Admin 2")}</a>`;
+        return `<h3 style="margin-top:18px;">Butuh Bantuan?</h3><div class="tombol-wa-grid">${tombol}</div>`;
     }
 
     document.addEventListener("click", function (e) {
@@ -166,8 +175,10 @@
         for (let i = 1; i <= 4; i++) {
             titik += `<div class="titik ${i < langkahSaatIni ? "selesai" : (i === langkahSaatIni ? "aktif" : "")}"></div>`;
         }
-        const namaLangkah = ["", "Data Diri Calon Siswa", "Data Orang Tua/Wali", "Pilihan Sekolah", "Ringkasan & Kirim"];
-        return `<div class="indikator-langkah">${titik}</div><div class="label-langkah">Langkah ${langkahSaatIni} dari 4 — ${namaLangkah[langkahSaatIni]}</div>`;
+        const namaLangkah = ["", "Data Diri Calon Siswa", "Data Orang Tua/Wali", "Pilihan Sekolah &amp; Akademik", "Ringkasan &amp; Kirim"];
+        return `<div class="label-langkah">Langkah ${langkahSaatIni} dari 4</div>
+                <div class="indikator-langkah">${titik}</div>
+                <h2 class="judul-langkah">${namaLangkah[langkahSaatIni]}</h2>`;
     }
 
     // -----------------------------------------------------------------
@@ -175,10 +186,8 @@
     // -----------------------------------------------------------------
     function htmlStep1() {
         return `
-            <h2>Data Diri Calon Siswa</h2>
-
             <div class="field">
-                <label>Nama Lengkap</label>
+                <label>Nama Lengkap <span class="opsional">(sesuai Akte/Ijazah)</span></label>
                 <input type="text" id="f_namaLengkap" required>
             </div>
 
@@ -189,7 +198,7 @@
                     <div class="error-field">NISN harus 10 digit angka.</div>
                 </div>
                 <div class="field">
-                    <label>No. HP <span class="opsional">(untuk login &amp; notifikasi)</span></label>
+                    <label>No. HP <span class="opsional">(login &amp; notifikasi)</span></label>
                     <input type="text" id="f_noHp" inputmode="numeric" maxlength="14" placeholder="08xxxxxxxxxx" required>
                     <div class="error-field">Format No HP harus 08xxxxxxxxxx.</div>
                 </div>
@@ -221,7 +230,7 @@
                 <input type="text" id="f_asalSekolahManual" placeholder="Tulis nama sekolah asal">
             </div>
 
-            <h3 style="margin-top:26px;">Alamat</h3>
+            <h3 style="margin-top:22px;">Alamat</h3>
             <label>Jalan / RT / RW</label>
             <input type="text" id="f_jalan" placeholder="Jl. Mawar No.5 RT 02 RW 03" required>
 
@@ -267,16 +276,13 @@
             <div class="pesan-error-umum" id="errorStep1"></div>
 
             <div class="tombol-baris">
-                <button id="btnKembaliStep1">Kembali</button>
-                <button class="utama" id="btnLanjutStep1">Lanjut</button>
+                <button id="btnKembaliStep1">${UI.ikon("panahKiri")} Kembali</button>
+                <button class="utama" id="btnLanjutStep1">Lanjut ${UI.ikon("panah")}</button>
             </div>
-
-            <pre class="hasil-draft" id="hasilDraftStep1" style="display:none;"></pre>
         `;
     }
 
     async function setupStep1() {
-        // Isi ulang dari draft kalau sudah pernah diisi sebelumnya.
         const d = draft;
         if (d.namaLengkap) document.getElementById("f_namaLengkap").value = d.namaLengkap;
         if (d.nisn) document.getElementById("f_nisn").value = d.nisn;
@@ -299,9 +305,9 @@
         const kotakManualSekolah = document.getElementById("kotakManualSekolah");
         try {
             const res = await API.getReferensiSekolah();
-            const daftar = (res.ok && res.data) ? res.data : [];
+            const daftarSekolah = (res.ok && res.data) ? res.data : [];
             selSekolah.innerHTML = '<option value="">— Pilih sekolah —</option>' +
-                daftar.map(function (s) { return `<option value="${s.NAMA_SEKOLAH}">${s.NAMA_SEKOLAH}</option>`; }).join("") +
+                daftarSekolah.map(function (s) { return `<option value="${UI.escapeHtml(s.NAMA_SEKOLAH)}">${UI.escapeHtml(s.NAMA_SEKOLAH)}</option>`; }).join("") +
                 '<option value="__LAINNYA__">Sekolah tidak ada di daftar / luar Cilacap (isi manual)</option>';
             if (d._asalSekolahManual) {
                 selSekolah.value = "__LAINNYA__";
@@ -311,7 +317,7 @@
                 selSekolah.value = d.asalSekolah;
             }
         } catch (err) {
-            selSekolah.innerHTML = '<option value="__LAINNYA__">Gagal memuat daftar — isi manual</option>';
+            selSekolah.innerHTML = '<option value="__LAINNYA__">Gagal memuat — isi manual</option>';
             selSekolah.value = "__LAINNYA__";
             kotakManualSekolah.classList.add("tampil");
         }
@@ -328,9 +334,9 @@
         async function muatKecamatan() {
             try {
                 const res = await API.getWilayahLokal("kecamatan", "");
-                const daftar = (res.ok && res.data) ? res.data : [];
+                const daftarWilayah = (res.ok && res.data) ? res.data : [];
                 selKecamatan.innerHTML = '<option value="">— Pilih kecamatan —</option>' +
-                    daftar.map(function (w) { return `<option value="${w.KODE}" data-nama="${w.NAMA}">${w.NAMA}</option>`; }).join("") +
+                    daftarWilayah.map(function (w) { return `<option value="${w.KODE}" data-nama="${UI.escapeHtml(w.NAMA)}">${UI.escapeHtml(w.NAMA)}</option>`; }).join("") +
                     '<option value="__LAINNYA__">Kecamatan tidak ada di daftar (isi manual)</option>';
                 if (d._kecamatanManual) {
                     selKecamatan.value = "__LAINNYA__";
@@ -351,9 +357,9 @@
             selDesa.innerHTML = '<option value="">Memuat…</option>';
             try {
                 const res = await API.getWilayahLokal("desa", kodeKecamatan);
-                const daftar = (res.ok && res.data) ? res.data : [];
+                const daftarWilayah = (res.ok && res.data) ? res.data : [];
                 selDesa.innerHTML = '<option value="">— Pilih desa/kelurahan —</option>' +
-                    daftar.map(function (w) { return `<option value="${w.NAMA}">${w.NAMA}</option>`; }).join("") +
+                    daftarWilayah.map(function (w) { return `<option value="${UI.escapeHtml(w.NAMA)}">${UI.escapeHtml(w.NAMA)}</option>`; }).join("") +
                     '<option value="__LAINNYA__">Tidak ada di daftar (isi manual)</option>';
                 if (d._desaManual) {
                     selDesa.value = "__LAINNYA__";
@@ -411,13 +417,11 @@
         if (!jalan) kesalahan.push("Alamat (Jalan/RT/RW) wajib diisi.");
         if (!kabupaten) kesalahan.push("Kabupaten/Kota wajib diisi.");
 
-        // Asal sekolah
         const selSekolah = document.getElementById("f_asalSekolah");
         const asalSekolahManual = ambil("f_asalSekolahManual");
         const asalSekolahFinal = selSekolah.value === "__LAINNYA__" ? asalSekolahManual : selSekolah.value;
         if (!asalSekolahFinal) kesalahan.push("Asal sekolah wajib diisi.");
 
-        // Kecamatan / Desa
         const selKecamatan = document.getElementById("f_kecamatan");
         const kecamatanManual = ambil("f_kecamatanManual");
         const kecamatanNamaFinal = selKecamatan.value === "__LAINNYA__"
@@ -437,9 +441,7 @@
             return;
         }
 
-        // Rakit ALAMAT jadi 1 string sesuai format Bagian 6.7 (kerja frontend, Bagian 18.2)
         const alamatGabungan = [jalan, desaFinal, kecamatanNamaFinal, kabupaten, kodePos].join("; ");
-        // Rakit TEMPAT_TGL_LAHIR sesuai format yang diharapkan Validator.gs backend ("Tempat, YYYY-MM-DD")
         const tempatTglLahirGabungan = tempatLahir + ", " + tanggalLahir;
 
         draft = Object.assign(draft, {
@@ -464,12 +466,462 @@
             anakKe: ambil("f_anakKe"),
             jumlahSaudara: ambil("f_jumlahSaudara"),
         });
+        langkahSaatIni = 2;
         simpanDraft();
+        render();
+    }
 
-        // Step 2-4 belum dibangun — tampilkan hasil rakitan draft utk verifikasi.
-        const hasilBox = document.getElementById("hasilDraftStep1");
-        hasilBox.style.display = "block";
-        hasilBox.textContent = "✅ Data Step 1 tersimpan ke draft (localStorage).\nStep 2 (Data Orang Tua/Wali) menyusul.\n\nData yang akan dikirim ke server nanti:\n" + JSON.stringify(draft, null, 2);
+    // -----------------------------------------------------------------
+    // STEP 2 — DATA ORANG TUA/WALI (Bagian 6.3 & 9)
+    // -----------------------------------------------------------------
+    function htmlStep2() {
+        return `
+            <div class="catatan amber">${UI.ikon("info")}<span>Minimal 1 No. HP aktif dari Ayah/Ibu/Wali wajib diisi.</span></div>
+
+            <div class="kartu">
+                <div class="baris-toggle" style="margin-bottom:10px;">
+                    <h3 style="margin:0;">Data Ayah Kandung</h3>
+                    <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:500; font-size:0.78rem;">
+                        <input type="checkbox" id="f_ayahAlmarhum" style="width:auto;"> Almarhum
+                    </label>
+                </div>
+                <label style="margin-top:0;">Nama Ayah</label>
+                <input type="text" id="f_namaAyah">
+                <label>Pekerjaan Ayah</label>
+                <input type="text" id="f_pekerjaanAyah">
+                <div id="blokHpAyah">
+                    <label>No. HP Ayah</label>
+                    <input type="text" id="f_noHpAyah" inputmode="numeric" maxlength="14" placeholder="08xxxxxxxxxx">
+                </div>
+                <label>Alamat Ayah <span class="opsional">(kosongkan jika sama dengan alamat siswa)</span></label>
+                <textarea id="f_alamatAyah" rows="2"></textarea>
+            </div>
+
+            <div class="kartu">
+                <div class="baris-toggle" style="margin-bottom:10px;">
+                    <h3 style="margin:0;">Data Ibu Kandung</h3>
+                    <label style="display:flex; align-items:center; gap:6px; margin:0; font-weight:500; font-size:0.78rem;">
+                        <input type="checkbox" id="f_ibuAlmarhum" style="width:auto;"> Almarhumah
+                    </label>
+                </div>
+                <label style="margin-top:0;">Nama Ibu</label>
+                <input type="text" id="f_namaIbu">
+                <label>Pekerjaan Ibu</label>
+                <input type="text" id="f_pekerjaanIbu">
+                <div id="blokHpIbu">
+                    <label>No. HP Ibu</label>
+                    <input type="text" id="f_noHpIbu" inputmode="numeric" maxlength="14" placeholder="08xxxxxxxxxx">
+                </div>
+                <label style="display:flex; align-items:center; gap:6px; font-weight:500; font-size:0.78rem;">
+                    <input type="checkbox" id="f_ibuAlamatSama" style="width:auto;" checked> Alamat sama dengan Ayah
+                </label>
+                <div id="blokAlamatIbu" class="kotak-manual">
+                    <label>Alamat Ibu</label>
+                    <textarea id="f_alamatIbu" rows="2"></textarea>
+                </div>
+            </div>
+
+            <div class="kartu">
+                <h3>Data Wali <span class="opsional" style="font-weight:500;">(opsional, isi kalau ada)</span></h3>
+                <label style="margin-top:0;">Nama Wali</label>
+                <input type="text" id="f_namaWali">
+                <div class="grup-2kolom">
+                    <div class="field">
+                        <label>Hubungan dengan Siswa</label>
+                        <input type="text" id="f_hubunganWali" placeholder="Contoh: Kakek, Paman">
+                    </div>
+                    <div class="field">
+                        <label>No. HP Wali</label>
+                        <input type="text" id="f_noHpWali" inputmode="numeric" maxlength="14" placeholder="08xxxxxxxxxx">
+                    </div>
+                </div>
+            </div>
+
+            <div class="pesan-error-umum" id="errorStep2"></div>
+
+            <div class="tombol-baris">
+                <button id="btnKembaliStep2">${UI.ikon("panahKiri")} Kembali</button>
+                <button class="utama" id="btnLanjutStep2">Lanjut ${UI.ikon("panah")}</button>
+            </div>
+        `;
+    }
+
+    function setupStep2() {
+        const d = draft;
+        const isi = function (id, val) { if (val) document.getElementById(id).value = val; };
+        isi("f_namaAyah", d.namaAyah); isi("f_pekerjaanAyah", d.pekerjaanAyah); isi("f_noHpAyah", d.noHpAyah); isi("f_alamatAyah", d.alamatAyah);
+        isi("f_namaIbu", d.namaIbu); isi("f_pekerjaanIbu", d.pekerjaanIbu); isi("f_noHpIbu", d.noHpIbu);
+        isi("f_namaWali", d.namaWali); isi("f_hubunganWali", d.hubunganWali); isi("f_noHpWali", d.noHpWali);
+
+        const ayahAlmarhum = document.getElementById("f_ayahAlmarhum");
+        const blokHpAyah = document.getElementById("blokHpAyah");
+        ayahAlmarhum.checked = d.sudahAlmarhumAyah === "Ya";
+        blokHpAyah.style.display = ayahAlmarhum.checked ? "none" : "block";
+        ayahAlmarhum.addEventListener("change", function () { blokHpAyah.style.display = ayahAlmarhum.checked ? "none" : "block"; });
+
+        const ibuAlmarhum = document.getElementById("f_ibuAlmarhum");
+        const blokHpIbu = document.getElementById("blokHpIbu");
+        ibuAlmarhum.checked = d.sudahAlmarhumIbu === "Ya";
+        blokHpIbu.style.display = ibuAlmarhum.checked ? "none" : "block";
+        ibuAlmarhum.addEventListener("change", function () { blokHpIbu.style.display = ibuAlmarhum.checked ? "none" : "block"; });
+
+        const ibuAlamatSama = document.getElementById("f_ibuAlamatSama");
+        const blokAlamatIbu = document.getElementById("blokAlamatIbu");
+        ibuAlamatSama.checked = d.ibuAlamatSama !== false;
+        blokAlamatIbu.classList.toggle("tampil", !ibuAlamatSama.checked);
+        if (d.alamatIbu) document.getElementById("f_alamatIbu").value = d.alamatIbu;
+        ibuAlamatSama.addEventListener("change", function () { blokAlamatIbu.classList.toggle("tampil", !ibuAlamatSama.checked); });
+
+        document.getElementById("btnKembaliStep2").addEventListener("click", function () {
+            langkahSaatIni = 1; simpanDraft(); render();
+        });
+        document.getElementById("btnLanjutStep2").addEventListener("click", prosesLanjutStep2);
+    }
+
+    function prosesLanjutStep2() {
+        const ambil = function (id) { return document.getElementById(id).value.trim(); };
+        const errorBox = document.getElementById("errorStep2");
+        errorBox.classList.remove("tampil"); errorBox.textContent = "";
+
+        const ayahAlmarhum = document.getElementById("f_ayahAlmarhum").checked;
+        const ibuAlmarhum = document.getElementById("f_ibuAlmarhum").checked;
+        const ibuAlamatSama = document.getElementById("f_ibuAlamatSama").checked;
+
+        const namaAyah = ambil("f_namaAyah"), namaIbu = ambil("f_namaIbu"), namaWali = ambil("f_namaWali");
+        const noHpAyah = ayahAlmarhum ? "" : ambil("f_noHpAyah");
+        const noHpIbu = ibuAlmarhum ? "" : ambil("f_noHpIbu");
+        const noHpWali = ambil("f_noHpWali");
+
+        const kesalahan = [];
+        if (!namaAyah && !namaIbu && !namaWali) kesalahan.push("Minimal salah satu data orang tua/wali (nama) wajib diisi.");
+        if (!noHpAyah && !noHpIbu && !noHpWali) kesalahan.push("Minimal 1 No. HP aktif dari Ayah/Ibu/Wali wajib diisi.");
+        [["No HP Ayah", noHpAyah], ["No HP Ibu", noHpIbu], ["No HP Wali", noHpWali]].forEach(function (pasangan) {
+            if (pasangan[1] && !/^08\d{8,11}$/.test(pasangan[1])) kesalahan.push(pasangan[0] + " formatnya harus 08xxxxxxxxxx.");
+        });
+
+        if (kesalahan.length) {
+            errorBox.innerHTML = kesalahan.join("<br>");
+            errorBox.classList.add("tampil");
+            return;
+        }
+
+        draft = Object.assign(draft, {
+            namaAyah: namaAyah, pekerjaanAyah: ambil("f_pekerjaanAyah"), noHpAyah: noHpAyah,
+            alamatAyah: ambil("f_alamatAyah"), sudahAlmarhumAyah: ayahAlmarhum ? "Ya" : "Tidak",
+            namaIbu: namaIbu, pekerjaanIbu: ambil("f_pekerjaanIbu"), noHpIbu: noHpIbu,
+            ibuAlamatSama: ibuAlamatSama,
+            alamatIbu: ibuAlamatSama ? ambil("f_alamatAyah") : ambil("f_alamatIbu"),
+            sudahAlmarhumIbu: ibuAlmarhum ? "Ya" : "Tidak",
+            namaWali: namaWali, hubunganWali: ambil("f_hubunganWali"), noHpWali: noHpWali,
+        });
+        langkahSaatIni = 3;
+        simpanDraft();
+        render();
+    }
+
+    // -----------------------------------------------------------------
+    // STEP 3 — PILIHAN SEKOLAH & AKADEMIK (Bagian 3 poin 1,3,7,11 & 9)
+    // (Survei TIDAK di sini — sesuai Bagian 3 poin 13, survei ada di
+    // halaman sukses sebagai kartu opsional, bukan bagian wizard.)
+    // -----------------------------------------------------------------
+    function htmlStep3() {
+        const kelasList = UI.csvKeArray(cfgPublik.KELAS_PEMINATAN_LIST);
+        const mapelRapor = UI.csvKeArray(cfgPublik.MAPEL_RAPOR_LIST);
+        const mapelTka = UI.csvKeArray(cfgPublik.MAPEL_TKA_LIST);
+        const btqTingkatList = UI.csvKeArray(cfgPublik.BTQ_TINGKAT_BACAAN_LIST);
+        const btqPosisiList = UI.csvKeArray(cfgPublik.BTQ_POSISI_QURAN_LIST);
+        const btqHafalanList = UI.csvKeArray(cfgPublik.BTQ_HAFALAN_LIST);
+
+        return `
+            <label>Kelas Peminatan <span class="opsional">(wajib pilih 1)</span></label>
+            <div id="daftarKelasPeminatan">
+                ${kelasList.length ? kelasList.map(function (k) {
+                    return `<div class="pilihan-kartu" data-kelas="${UI.escapeHtml(k)}"><div style="display:flex; align-items:center; gap:10px;"><span class="bulatan"></span><span class="judul">${UI.escapeHtml(k)}</span></div></div>`;
+                }).join("") : '<div class="teks-lembut">Daftar kelas peminatan belum diisi admin di CONFIG.KELAS_PEMINATAN_LIST.</div>'}
+            </div>
+            <div class="pesan-error-umum" id="errorKelas"></div>
+
+            <div class="kartu" style="margin-top:16px;">
+                <div class="baris-toggle">
+                    <div><div style="font-weight:800; font-size:0.85rem;">Program Boarding (Asrama)</div><div class="teks-kecil">Tinggal di asrama sekolah</div></div>
+                    <button type="button" class="toggle" id="toggleBoarding"><span class="bola"></span></button>
+                </div>
+            </div>
+
+            <div class="kartu">
+                <h3>Program BTQ</h3>
+                <label style="margin-top:0;">Tingkat Bacaan</label>
+                <select id="f_btqTingkat">
+                    <option value="">— Pilih —</option>
+                    ${btqTingkatList.map(function (t) { return `<option value="${UI.escapeHtml(t)}">${UI.escapeHtml(t)}</option>`; }).join("")}
+                </select>
+                <div id="blokBtqLanjutan" style="display:none;">
+                    <label>Posisi Bacaan Al-Qur'an</label>
+                    <select id="f_btqPosisi">
+                        <option value="">— Pilih —</option>
+                        ${btqPosisiList.map(function (t) { return `<option value="${UI.escapeHtml(t)}">${UI.escapeHtml(t)}</option>`; }).join("")}
+                    </select>
+                    <label>Hafalan Juz <span class="opsional">(boleh pilih lebih dari 1)</span></label>
+                    <div class="chip-baris" id="chipHafalan">
+                        ${btqHafalanList.map(function (j) { return `<button type="button" class="chip" data-juz="${UI.escapeHtml(j)}">${UI.escapeHtml(j)}</button>`; }).join("")}
+                    </div>
+                </div>
+            </div>
+
+            <div class="kartu">
+                <h3>Nilai Rapor <span class="opsional" style="font-weight:500;">(opsional, skala 0-100)</span></h3>
+                <div class="grid-2" id="grupNilaiRapor">
+                    ${mapelRapor.map(function (m) {
+                        return `<div class="field"><label style="margin-top:4px; font-size:0.72rem;">${UI.escapeHtml(m)}</label><input type="text" inputmode="decimal" data-mapel-rapor="${UI.escapeHtml(m)}" placeholder="0-100"></div>`;
+                    }).join("")}
+                </div>
+            </div>
+
+            <div class="kartu">
+                <h3>Nilai TKA <span class="opsional" style="font-weight:500;">(opsional)</span></h3>
+                <div id="grupNilaiTka">
+                    ${mapelTka.map(function (m) {
+                        return `<div class="field"><label style="margin-top:4px; font-size:0.72rem;">${UI.escapeHtml(m)}</label><input type="text" inputmode="decimal" data-mapel-tka="${UI.escapeHtml(m)}" placeholder="0-100"></div>`;
+                    }).join("")}
+                </div>
+            </div>
+
+            <label>Prestasi <span class="opsional">(opsional)</span></label>
+            <textarea id="f_prestasi" rows="2" placeholder="Contoh: Juara 1 Lomba Biologi Tingkat Kota 2025"></textarea>
+
+            <div class="pesan-error-umum" id="errorStep3"></div>
+
+            <div class="tombol-baris">
+                <button id="btnKembaliStep3">${UI.ikon("panahKiri")} Kembali</button>
+                <button class="utama" id="btnLanjutStep3">Lanjut ${UI.ikon("panah")}</button>
+            </div>
+        `;
+    }
+
+    function setupStep3() {
+        const d = draft;
+
+        // Kelas peminatan
+        let kelasTerpilih = d.kelasPeminatan || "";
+        function renderPilihanKelas() {
+            document.querySelectorAll("#daftarKelasPeminatan .pilihan-kartu").forEach(function (el) {
+                el.classList.toggle("aktif", el.getAttribute("data-kelas") === kelasTerpilih);
+            });
+        }
+        renderPilihanKelas();
+        document.querySelectorAll("#daftarKelasPeminatan .pilihan-kartu").forEach(function (el) {
+            el.addEventListener("click", function () { kelasTerpilih = el.getAttribute("data-kelas"); renderPilihanKelas(); });
+        });
+
+        // Boarding toggle
+        const toggleBoarding = document.getElementById("toggleBoarding");
+        let boardingAktif = d.boarding === "Ya";
+        toggleBoarding.classList.toggle("aktif", boardingAktif);
+        toggleBoarding.addEventListener("click", function () {
+            boardingAktif = !boardingAktif;
+            toggleBoarding.classList.toggle("aktif", boardingAktif);
+        });
+
+        // BTQ conditional
+        const selBtqTingkat = document.getElementById("f_btqTingkat");
+        const blokBtqLanjutan = document.getElementById("blokBtqLanjutan");
+        function toggleBlokBtq() { blokBtqLanjutan.style.display = selBtqTingkat.value ? "block" : "none"; }
+        if (d.tingkatBacaanBtq) selBtqTingkat.value = d.tingkatBacaanBtq;
+        toggleBlokBtq();
+        selBtqTingkat.addEventListener("change", toggleBlokBtq);
+        if (d.posisiBacaanQuran) document.getElementById("f_btqPosisi").value = d.posisiBacaanQuran;
+
+        let hafalanTerpilih = UI.csvKeArray(d.hafalanJuzBtq);
+        function renderChipHafalan() {
+            document.querySelectorAll("#chipHafalan .chip").forEach(function (el) {
+                el.classList.toggle("aktif", hafalanTerpilih.indexOf(el.getAttribute("data-juz")) !== -1);
+            });
+        }
+        renderChipHafalan();
+        document.querySelectorAll("#chipHafalan .chip").forEach(function (el) {
+            el.addEventListener("click", function () {
+                const juz = el.getAttribute("data-juz");
+                const idx = hafalanTerpilih.indexOf(juz);
+                if (idx === -1) hafalanTerpilih.push(juz); else hafalanTerpilih.splice(idx, 1);
+                renderChipHafalan();
+            });
+        });
+
+        // Nilai rapor/TKA — isi ulang dari draft
+        const nilaiRaporDraft = {}; UI.csvKeArray(d.nilaiMapelRapor).forEach(function (pair) { const kv = pair.split(":"); if (kv.length === 2) nilaiRaporDraft[kv[0]] = kv[1]; });
+        document.querySelectorAll("[data-mapel-rapor]").forEach(function (el) {
+            const m = el.getAttribute("data-mapel-rapor");
+            if (nilaiRaporDraft[m]) el.value = nilaiRaporDraft[m];
+        });
+        const nilaiTkaDraft = {}; UI.csvKeArray(d.nilaiMapelTka).forEach(function (pair) { const kv = pair.split(":"); if (kv.length === 2) nilaiTkaDraft[kv[0]] = kv[1]; });
+        document.querySelectorAll("[data-mapel-tka]").forEach(function (el) {
+            const m = el.getAttribute("data-mapel-tka");
+            if (nilaiTkaDraft[m]) el.value = nilaiTkaDraft[m];
+        });
+        if (d.prestasi) document.getElementById("f_prestasi").value = d.prestasi;
+
+        document.getElementById("btnKembaliStep3").addEventListener("click", function () {
+            langkahSaatIni = 2; simpanDraft(); render();
+        });
+        document.getElementById("btnLanjutStep3").addEventListener("click", function () {
+            prosesLanjutStep3(kelasTerpilih, boardingAktif, hafalanTerpilih);
+        });
+    }
+
+    function prosesLanjutStep3(kelasTerpilih, boardingAktif, hafalanTerpilih) {
+        const errorBox = document.getElementById("errorStep3");
+        errorBox.classList.remove("tampil"); errorBox.textContent = "";
+        const kesalahan = [];
+
+        if (!kelasTerpilih) kesalahan.push("Kelas peminatan wajib dipilih.");
+
+        const kumpulkanNilai = function (selektor, batasNama) {
+            const hasil = []; const peringatan = [];
+            document.querySelectorAll(selektor).forEach(function (el) {
+                const nilai = el.value.trim();
+                if (!nilai) return;
+                if (!/^\d{1,3}(\.\d+)?$/.test(nilai)) { peringatan.push(batasNama + " " + el.getAttribute(batasNama === "Rapor" ? "data-mapel-rapor" : "data-mapel-tka") + " harus angka (titik untuk desimal, bukan koma)."); return; }
+                const mapel = el.getAttribute(batasNama === "Rapor" ? "data-mapel-rapor" : "data-mapel-tka");
+                hasil.push(mapel + ":" + nilai);
+            });
+            return { csv: hasil.join(","), peringatan: peringatan };
+        };
+        const rapor = kumpulkanNilai("[data-mapel-rapor]", "Rapor");
+        const tka = kumpulkanNilai("[data-mapel-tka]", "TKA");
+        kesalahan.push(...rapor.peringatan, ...tka.peringatan);
+
+        if (kesalahan.length) {
+            errorBox.innerHTML = kesalahan.join("<br>");
+            errorBox.classList.add("tampil");
+            return;
+        }
+
+        draft = Object.assign(draft, {
+            kelasPeminatan: kelasTerpilih,
+            boarding: boardingAktif ? "Ya" : "Tidak",
+            tingkatBacaanBtq: document.getElementById("f_btqTingkat").value,
+            posisiBacaanQuran: document.getElementById("f_btqPosisi") ? document.getElementById("f_btqPosisi").value : "",
+            hafalanJuzBtq: hafalanTerpilih.join(","),
+            nilaiMapelRapor: rapor.csv,
+            nilaiMapelTka: tka.csv,
+            prestasi: document.getElementById("f_prestasi").value.trim(),
+        });
+        langkahSaatIni = 4;
+        simpanDraft();
+        render();
+    }
+
+    // -----------------------------------------------------------------
+    // STEP 4 — RINGKASAN & KIRIM (Bagian 3 poin 5,6 & 9)
+    // -----------------------------------------------------------------
+    function htmlStep4() {
+        const d = draft;
+        const biayaDpMin = cfgPublik.BIAYA_DP_MIN || "0";
+        return `
+            <div class="catatan hijau">${UI.ikon("perisai")}<span>Periksa data sebelum kirim. Upload dokumen dilakukan terpisah nanti dari Dashboard Pendaftar.</span></div>
+
+            <div class="kartu" style="position:relative;">
+                <button type="button" class="tombol teks" style="position:absolute; top:10px; right:10px; padding:2px;" data-ubah="1">Ubah</button>
+                <div class="teks-kecil">DATA SISWA</div>
+                <div style="font-weight:800; margin-top:2px;">${UI.escapeHtml(d.namaLengkap || "-")}</div>
+                <div class="teks-lembut">NISN ${UI.escapeHtml(d.nisn || "-")} · ${UI.escapeHtml(d.jenisKelamin || "-")}</div>
+                <div class="teks-lembut">${UI.escapeHtml(d.alamat || "-")}</div>
+            </div>
+
+            <div class="kartu" style="position:relative;">
+                <button type="button" class="tombol teks" style="position:absolute; top:10px; right:10px; padding:2px;" data-ubah="2">Ubah</button>
+                <div class="teks-kecil">ORANG TUA/WALI</div>
+                <div style="font-weight:800; margin-top:2px;">${UI.escapeHtml(d.namaAyah || "-")} (Ayah)</div>
+                <div style="font-weight:800;">${UI.escapeHtml(d.namaIbu || "-")} (Ibu)</div>
+                ${d.namaWali ? `<div class="teks-lembut">Wali: ${UI.escapeHtml(d.namaWali)}</div>` : ""}
+            </div>
+
+            <div class="kartu" style="position:relative;">
+                <button type="button" class="tombol teks" style="position:absolute; top:10px; right:10px; padding:2px;" data-ubah="3">Ubah</button>
+                <div class="teks-kecil">PILIHAN & AKADEMIK</div>
+                <div style="font-weight:800; margin-top:2px;">${UI.escapeHtml(d.kelasPeminatan || "-")}</div>
+                <div class="teks-lembut">${d.boarding === "Ya" ? "Boarding" : "Non-Boarding"}${d.tingkatBacaanBtq ? " · BTQ: " + UI.escapeHtml(d.tingkatBacaanBtq) : ""}</div>
+            </div>
+
+            <div class="kartu-akun-gelap">
+                <div class="label-mini">DP PENDAFTARAN (OPSIONAL)</div>
+                <div class="nilai-besar" style="font-size:1rem; margin-top:6px;">Minimal ${UI.formatRupiah(biayaDpMin)}</div>
+                <div class="teks-lembut" style="color:#cbd5c8; margin-top:8px;">DP TIDAK wajib saat submit — bisa dibayar &amp; diupload buktinya kapan saja dari Dashboard Pendaftar setelah mendaftar.</div>
+            </div>
+
+            <label style="display:flex; align-items:flex-start; gap:8px; font-weight:500; font-size:0.82rem; margin-top:16px;">
+                <input type="checkbox" id="f_pernyataan" style="width:auto; margin-top:3px;">
+                <span>Saya menyatakan data yang diisikan adalah benar dan bertanggung jawab atas isian tersebut.</span>
+            </label>
+
+            <div class="pesan-error-umum" id="errorStep4"></div>
+
+            <div class="tombol-baris">
+                <button id="btnKembaliStep4">${UI.ikon("panahKiri")} Kembali</button>
+                <button class="utama" id="btnKirim" disabled>Kirim Pendaftaran</button>
+            </div>
+        `;
+    }
+
+    function setupStep4() {
+        document.querySelectorAll("[data-ubah]").forEach(function (el) {
+            el.addEventListener("click", function () {
+                langkahSaatIni = Number(el.getAttribute("data-ubah"));
+                simpanDraft(); render();
+            });
+        });
+        const cbPernyataan = document.getElementById("f_pernyataan");
+        const btnKirim = document.getElementById("btnKirim");
+        cbPernyataan.addEventListener("change", function () { btnKirim.disabled = !cbPernyataan.checked; });
+
+        document.getElementById("btnKembaliStep4").addEventListener("click", function () {
+            langkahSaatIni = 3; simpanDraft(); render();
+        });
+        btnKirim.addEventListener("click", prosesKirimPendaftaran);
+    }
+
+    async function prosesKirimPendaftaran() {
+        if (sedangKirim) return;
+        sedangKirim = true;
+        const btnKirim = document.getElementById("btnKirim");
+        const errorBox = document.getElementById("errorStep4");
+        btnKirim.disabled = true;
+        btnKirim.innerHTML = UI.ikon("spinner") + " Memproses…";
+
+        try {
+            const payload = Object.assign({}, draft);
+            // Buang field internal (prefiks _) yang cuma dipakai utk UX form,
+            // TIDAK boleh terkirim ke server (Bagian 18.2: field dokumen &
+            // internal dibuang sebelum kirim).
+            Object.keys(payload).forEach(function (k) { if (k.indexOf("_") === 0) delete payload[k]; });
+
+            const res = await API.submitPendaftaran(payload);
+            if (!res.ok) {
+                errorBox.textContent = res.pesan || "Gagal mengirim pendaftaran.";
+                errorBox.classList.add("tampil");
+                btnKirim.disabled = false;
+                btnKirim.innerHTML = "Kirim Pendaftaran";
+                sedangKirim = false;
+                return;
+            }
+
+            // Sukses — simpan info akun utk halaman sukses, HAPUS draft
+            // (Bagian 9: draft dihapus HANYA kalau submit sukses).
+            sessionStorage.setItem("SPMB_AKUN_BARU", JSON.stringify({
+                noPendaftaran: res.data.noPendaftaran,
+                pin: res.data.pin,
+                noHp: draft.noHp,
+                namaLengkap: draft.namaLengkap,
+            }));
+            hapusDraft();
+            window.location.href = "sukses.html";
+        } catch (err) {
+            errorBox.textContent = "Error jaringan: " + err.message;
+            errorBox.classList.add("tampil");
+            btnKirim.disabled = false;
+            btnKirim.innerHTML = "Kirim Pendaftaran";
+            sedangKirim = false;
+        }
     }
 
     mulai();
