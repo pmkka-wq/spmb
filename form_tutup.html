@@ -1,1 +1,61 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pendaftaran Belum/Tidak Dibuka — SPMB Mudacil</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<div class="bungkus">
+    <div class="kop">
+        <div class="lambang"></div>
+        <div>
+            <div class="nama-sistem" id="txtNamaAplikasi">SPMB Mudacil</div>
+            <div class="nama-sekolah" id="txtNamaSekolah">SMP Muhammadiyah 2 Cilacap</div>
+        </div>
+    </div>
 
+    <div class="panel" id="panelTutup">
+        <div class="pemuat">Memuat…</div>
+    </div>
+
+    <div class="tombol-baris">
+        <a class="tombol utama" href="login.html?panel=pendaftar">Login (Sudah Punya Akun)</a>
+        <a class="tombol" href="login.html?panel=sekolah">Login Sekolah</a>
+    </div>
+</div>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/api.js"></script>
+<script>
+    async function muatHalaman() {
+        try {
+            const res = await API.getConfig();
+            const panel = document.getElementById("panelTutup");
+
+            if (res.ok && res.data) {
+                if (res.data.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").textContent = res.data.NAMA_APLIKASI;
+                if (res.data.NAMA_SEKOLAH) document.getElementById("txtNamaSekolah").textContent = res.data.NAMA_SEKOLAH;
+
+                const judul = res.data.FORM_TUTUP_JUDUL || "Pendaftaran Belum Dibuka";
+                const subjudul = res.data.FORM_TUTUP_SUBJUDUL || "Silakan cek kembali sesuai jadwal yang telah ditentukan.";
+                const infoTambahan = res.data.FORM_TUTUP_INFO_TAMBAHAN || "";
+
+                panel.innerHTML =
+                    "<h1>" + judul + "</h1>" +
+                    "<p class=\"teks-lembut\">" + subjudul + "</p>" +
+                    (infoTambahan ? "<div class=\"kartu-info\"><p style=\"margin:0;\">" + infoTambahan + "</p></div>" : "");
+            } else {
+                panel.innerHTML = "<h1>Pendaftaran Belum Dibuka</h1><p class=\"teks-lembut\">Silakan cek kembali nanti.</p>";
+            }
+        } catch (err) {
+            document.getElementById("panelTutup").innerHTML =
+                "<h1>Tidak bisa memuat informasi</h1><p class=\"teks-lembut\">Periksa koneksi internet Anda, lalu muat ulang halaman ini.</p>";
+        }
+    }
+
+    muatHalaman();
+</script>
+</body>
+</html>
