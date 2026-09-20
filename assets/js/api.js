@@ -32,6 +32,18 @@ const API = (() => {
     // 8 jam, selaras Bagian 8 & 19.5 — tidak ada token jangka panjang.
     const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
 
+    // CATATAN PENTING (GitHub Pages multi-project di 1 username.github.io):
+    // localStorage dibatasi browser per ORIGIN (protokol+domain), BUKAN per
+    // path. Artinya username.github.io/spmb/ dan username.github.io/ppdb/
+    // berbagi localStorage YANG SAMA — beda dengan cookie yang default-nya
+    // terbatas per path. Prefix "SPMB_" di key ini mengurangi risiko
+    // tabrakan nama key dengan project lain, TAPI BUKAN isolasi keamanan
+    // sungguhan (script di /ppdb/ tetap bisa baca localStorage.getItem
+    // ("SPMB_TOKEN") kalau tahu/menebak nama key-nya). Kalau isolasi
+    // sungguhan dibutuhkan, satu-satunya cara pasti adalah custom domain
+    // terpisah per project (beda origin = beda "wadah" localStorage sama
+    // sekali, dijamin browser) — bukan sekadar penamaan key yang rapi.
+
     // -------------------------------------------------------------------------
     // CACHE CLIENT (Bagian 18.1) — in-memory, hilang saat reload halaman.
     // Data di sini SENGAJA tidak dipersist ke localStorage: cukup "per sesi
