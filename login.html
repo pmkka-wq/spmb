@@ -42,6 +42,7 @@
             <div class="pesan-error-umum" id="errorLogin"></div>
 
             <button class="utama blok" id="btnLogin" style="margin-top:18px;">Masuk Dashboard</button>
+            <p class="teks-lembut" style="text-align:center; margin-top:14px;">Belum pernah daftar? <a href="daftar.html" style="color:var(--hijau-600); font-weight:700;">Daftar dulu</a>, nanti lanjut ke form pendaftaran.</p>
         </div>
 
         <div id="panelSekolah" style="display:none;">
@@ -88,6 +89,7 @@
     }
     document.querySelectorAll('input[name="tabPanel"]').forEach(function (r) { r.addEventListener("change", terapkanTab); });
     terapkanTab();
+    UI.pasangToggleSandi();
 
     async function muatNamaAplikasi() {
         try {

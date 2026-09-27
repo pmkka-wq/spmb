@@ -45,6 +45,15 @@
             if (cfgPublik.NAMA_SEKOLAH) document.getElementById("txtNamaSekolah").textContent = cfgPublik.NAMA_SEKOLAH;
         } catch (err) { /* CONFIG gagal dimuat bukan blocking di halaman ini */ }
 
+        // Login "diam-diam" pakai kredensial yang baru dibuat, supaya klik
+        // "Masuk ke Dashboard" nanti langsung masuk TANPA perlu isi ulang
+        // form login. Kalau gagal (mis. gerbang tertutup atau rate limit),
+        // tombol di bawah tetap mengarah ke login.html sebagai fallback —
+        // bukan blocking halaman sukses ini.
+        try {
+            if (!API.sesiInfo().adaToken) await API.login(akun.noHp, akun.noPendaftaran, akun.pin);
+        } catch (err) { /* fallback ke login manual, tidak fatal */ }
+
         document.getElementById("areaMuat").style.display = "none";
         document.getElementById("areaKonten").style.display = "block";
         render();
@@ -83,7 +92,7 @@
             ${htmlTombolWA()}
 
             <div style="margin-top:18px;">
-                <a class="tombol utama blok" href="login.html">Masuk ke Dashboard Pendaftar ${UI.ikon("panah")}</a>
+                <a class="tombol utama blok" href="${API.sesiInfo().adaToken ? "dashboard.html" : "login.html"}">${API.sesiInfo().adaToken ? "Masuk ke Dashboard Pendaftar" : "Login ke Dashboard Pendaftar"} ${UI.ikon("panah")}</a>
             </div>
         `;
 

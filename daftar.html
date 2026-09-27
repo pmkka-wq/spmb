@@ -224,11 +224,9 @@
                 </div>
             </div>
 
-            <label>Asal Sekolah</label>
-            <select id="f_asalSekolah"><option value="">Memuat daftar sekolah…</option></select>
-            <div class="kotak-manual" id="kotakManualSekolah">
-                <input type="text" id="f_asalSekolahManual" placeholder="Tulis nama sekolah asal">
-            </div>
+            <label>Asal Sekolah <span class="opsional">(ketik untuk cari, atau isi manual kalau tidak ada di daftar)</span></label>
+            <input type="text" id="f_asalSekolah" list="listSekolah" placeholder="Mulai ketik nama sekolah…">
+            <datalist id="listSekolah"></datalist>
 
             <h3 style="margin-top:22px;">Alamat</h3>
             <label>Jalan / RT / RW</label>
@@ -236,18 +234,14 @@
 
             <div class="grup-2kolom">
                 <div class="field">
-                    <label>Kecamatan</label>
-                    <select id="f_kecamatan"><option value="">Memuat…</option></select>
-                    <div class="kotak-manual" id="kotakManualKecamatan">
-                        <input type="text" id="f_kecamatanManual" placeholder="Tulis nama kecamatan">
-                    </div>
+                    <label>Kecamatan <span class="opsional">(ketik/pilih)</span></label>
+                    <input type="text" id="f_kecamatan" list="listKecamatan" placeholder="Mulai ketik…">
+                    <datalist id="listKecamatan"></datalist>
                 </div>
                 <div class="field">
-                    <label>Desa/Kelurahan</label>
-                    <select id="f_desa"><option value="">Pilih kecamatan dulu</option></select>
-                    <div class="kotak-manual" id="kotakManualDesa">
-                        <input type="text" id="f_desaManual" placeholder="Tulis nama desa/kelurahan">
-                    </div>
+                    <label>Desa/Kelurahan <span class="opsional">(ketik/pilih)</span></label>
+                    <input type="text" id="f_desa" list="listDesa" placeholder="Pilih kecamatan dulu">
+                    <datalist id="listDesa"></datalist>
                 </div>
             </div>
 
@@ -300,89 +294,55 @@
         if (d.anakKe) document.getElementById("f_anakKe").value = d.anakKe;
         if (d.jumlahSaudara) document.getElementById("f_jumlahSaudara").value = d.jumlahSaudara;
 
-        // --- Asal sekolah ---
-        const selSekolah = document.getElementById("f_asalSekolah");
-        const kotakManualSekolah = document.getElementById("kotakManualSekolah");
+        // --- Asal sekolah (datalist — bisa pilih ATAU ketik bebas) ---
+        const inputSekolah = document.getElementById("f_asalSekolah");
+        const listSekolah = document.getElementById("listSekolah");
+        if (d.asalSekolah) inputSekolah.value = d.asalSekolah;
         try {
             const res = await API.getReferensiSekolah();
             const daftarSekolah = (res.ok && res.data) ? res.data : [];
-            selSekolah.innerHTML = '<option value="">— Pilih sekolah —</option>' +
-                daftarSekolah.map(function (s) { return `<option value="${UI.escapeHtml(s.NAMA_SEKOLAH)}">${UI.escapeHtml(s.NAMA_SEKOLAH)}</option>`; }).join("") +
-                '<option value="__LAINNYA__">Sekolah tidak ada di daftar / luar Cilacap (isi manual)</option>';
-            if (d._asalSekolahManual) {
-                selSekolah.value = "__LAINNYA__";
-                kotakManualSekolah.classList.add("tampil");
-                document.getElementById("f_asalSekolahManual").value = d._asalSekolahManual;
-            } else if (d.asalSekolah) {
-                selSekolah.value = d.asalSekolah;
-            }
-        } catch (err) {
-            selSekolah.innerHTML = '<option value="__LAINNYA__">Gagal memuat — isi manual</option>';
-            selSekolah.value = "__LAINNYA__";
-            kotakManualSekolah.classList.add("tampil");
-        }
-        selSekolah.addEventListener("change", function () {
-            kotakManualSekolah.classList.toggle("tampil", selSekolah.value === "__LAINNYA__");
-        });
+            listSekolah.innerHTML = daftarSekolah.map(function (s) { return `<option value="${UI.escapeHtml(s.NAMA_SEKOLAH)}">`; }).join("");
+        } catch (err) { /* datalist kosong tetap bisa diketik manual */ }
 
-        // --- Kecamatan -> Desa (cascading, Bagian 15) ---
-        const selKecamatan = document.getElementById("f_kecamatan");
-        const kotakManualKecamatan = document.getElementById("kotakManualKecamatan");
-        const selDesa = document.getElementById("f_desa");
-        const kotakManualDesa = document.getElementById("kotakManualDesa");
+        // --- Kecamatan -> Desa (cascading, Bagian 15) — datalist juga ---
+        const inputKecamatan = document.getElementById("f_kecamatan");
+        const listKecamatan = document.getElementById("listKecamatan");
+        const inputDesa = document.getElementById("f_desa");
+        const listDesa = document.getElementById("listDesa");
+        let daftarKecamatanCache = [];
 
         async function muatKecamatan() {
             try {
                 const res = await API.getWilayahLokal("kecamatan", "");
-                const daftarWilayah = (res.ok && res.data) ? res.data : [];
-                selKecamatan.innerHTML = '<option value="">— Pilih kecamatan —</option>' +
-                    daftarWilayah.map(function (w) { return `<option value="${w.KODE}" data-nama="${UI.escapeHtml(w.NAMA)}">${UI.escapeHtml(w.NAMA)}</option>`; }).join("") +
-                    '<option value="__LAINNYA__">Kecamatan tidak ada di daftar (isi manual)</option>';
-                if (d._kecamatanManual) {
-                    selKecamatan.value = "__LAINNYA__";
-                    kotakManualKecamatan.classList.add("tampil");
-                    document.getElementById("f_kecamatanManual").value = d._kecamatanManual;
-                } else if (d._kecamatanKode) {
-                    selKecamatan.value = d._kecamatanKode;
-                    muatDesa(d._kecamatanKode);
-                }
-            } catch (err) {
-                selKecamatan.innerHTML = '<option value="__LAINNYA__">Gagal memuat — isi manual</option>';
-                selKecamatan.value = "__LAINNYA__";
-                kotakManualKecamatan.classList.add("tampil");
-            }
+                daftarKecamatanCache = (res.ok && res.data) ? res.data : [];
+                listKecamatan.innerHTML = daftarKecamatanCache.map(function (w) { return `<option value="${UI.escapeHtml(w.NAMA)}">`; }).join("");
+            } catch (err) { /* datalist kosong tetap bisa diketik manual */ }
         }
 
         async function muatDesa(kodeKecamatan) {
-            selDesa.innerHTML = '<option value="">Memuat…</option>';
             try {
                 const res = await API.getWilayahLokal("desa", kodeKecamatan);
                 const daftarWilayah = (res.ok && res.data) ? res.data : [];
-                selDesa.innerHTML = '<option value="">— Pilih desa/kelurahan —</option>' +
-                    daftarWilayah.map(function (w) { return `<option value="${UI.escapeHtml(w.NAMA)}">${UI.escapeHtml(w.NAMA)}</option>`; }).join("") +
-                    '<option value="__LAINNYA__">Tidak ada di daftar (isi manual)</option>';
-                if (d._desaManual) {
-                    selDesa.value = "__LAINNYA__";
-                    kotakManualDesa.classList.add("tampil");
-                    document.getElementById("f_desaManual").value = d._desaManual;
-                } else if (d.desa) {
-                    selDesa.value = d.desa;
-                }
-            } catch (err) {
-                selDesa.innerHTML = '<option value="__LAINNYA__">Gagal memuat — isi manual</option>';
-            }
+                listDesa.innerHTML = daftarWilayah.map(function (w) { return `<option value="${UI.escapeHtml(w.NAMA)}">`; }).join("");
+            } catch (err) { listDesa.innerHTML = ""; }
         }
 
-        selKecamatan.addEventListener("change", function () {
-            const manual = selKecamatan.value === "__LAINNYA__";
-            kotakManualKecamatan.classList.toggle("tampil", manual);
-            if (!manual && selKecamatan.value) muatDesa(selKecamatan.value);
-        });
-        selDesa.addEventListener("change", function () {
-            kotakManualDesa.classList.toggle("tampil", selDesa.value === "__LAINNYA__");
+        // Kalau nama kecamatan yang diketik cocok persis dgn salah satu di
+        // daftar (dipilih dari datalist ATAU diketik manual sama persis),
+        // muat desa terkait. Kalau tidak cocok (kecamatan di luar daftar),
+        // desa tetap bisa diisi bebas tanpa saran.
+        inputKecamatan.addEventListener("change", function () {
+            const cocok = daftarKecamatanCache.find(function (w) { return w.NAMA.toLowerCase() === inputKecamatan.value.trim().toLowerCase(); });
+            if (cocok) { muatDesa(cocok.KODE); } else { listDesa.innerHTML = ""; }
+            inputDesa.placeholder = cocok ? "Mulai ketik…" : "Ketik nama desa/kelurahan";
         });
 
-        muatKecamatan();
+        await muatKecamatan();
+        if (d.kecamatanNama) {
+            inputKecamatan.value = d.kecamatanNama;
+            inputKecamatan.dispatchEvent(new Event("change"));
+        }
+        if (d.desa) inputDesa.value = d.desa;
 
         document.getElementById("btnKembaliStep1").addEventListener("click", function () {
             langkahSaatIni = 0;
@@ -417,20 +377,11 @@
         if (!jalan) kesalahan.push("Alamat (Jalan/RT/RW) wajib diisi.");
         if (!kabupaten) kesalahan.push("Kabupaten/Kota wajib diisi.");
 
-        const selSekolah = document.getElementById("f_asalSekolah");
-        const asalSekolahManual = ambil("f_asalSekolahManual");
-        const asalSekolahFinal = selSekolah.value === "__LAINNYA__" ? asalSekolahManual : selSekolah.value;
+        const asalSekolahFinal = ambil("f_asalSekolah");
         if (!asalSekolahFinal) kesalahan.push("Asal sekolah wajib diisi.");
 
-        const selKecamatan = document.getElementById("f_kecamatan");
-        const kecamatanManual = ambil("f_kecamatanManual");
-        const kecamatanNamaFinal = selKecamatan.value === "__LAINNYA__"
-            ? kecamatanManual
-            : (selKecamatan.selectedOptions[0] ? selKecamatan.selectedOptions[0].getAttribute("data-nama") : "");
-
-        const selDesa = document.getElementById("f_desa");
-        const desaManual = ambil("f_desaManual");
-        const desaFinal = selDesa.value === "__LAINNYA__" ? desaManual : selDesa.value;
+        const kecamatanNamaFinal = ambil("f_kecamatan");
+        const desaFinal = ambil("f_desa");
 
         if (!kecamatanNamaFinal) kesalahan.push("Kecamatan wajib diisi.");
         if (!desaFinal) kesalahan.push("Desa/Kelurahan wajib diisi.");
@@ -454,13 +405,10 @@
             _tempatLahirMentah: tempatLahir,
             _tanggalLahirMentah: tanggalLahir,
             asalSekolah: asalSekolahFinal,
-            _asalSekolahManual: selSekolah.value === "__LAINNYA__" ? asalSekolahManual : "",
             alamat: alamatGabungan,
             jalan: jalan,
             desa: desaFinal,
-            _desaManual: selDesa.value === "__LAINNYA__" ? desaManual : "",
-            _kecamatanKode: selKecamatan.value !== "__LAINNYA__" ? selKecamatan.value : "",
-            _kecamatanManual: selKecamatan.value === "__LAINNYA__" ? kecamatanManual : "",
+            kecamatanNama: kecamatanNamaFinal,
             kabupaten: kabupaten,
             kodePos: kodePos,
             anakKe: ambil("f_anakKe"),
@@ -629,7 +577,8 @@
         const mapelRapor = UI.csvKeArray(cfgPublik.MAPEL_RAPOR_LIST);
         const mapelTka = UI.csvKeArray(cfgPublik.MAPEL_TKA_LIST);
         const btqTingkatList = UI.csvKeArray(cfgPublik.BTQ_TINGKAT_BACAAN_LIST);
-        const btqPosisiList = UI.csvKeArray(cfgPublik.BTQ_POSISI_QURAN_LIST);
+        let btqDetailMap = {};
+        try { btqDetailMap = JSON.parse(cfgPublik.BTQ_TINGKAT_DETAIL_LIST || "{}"); } catch (e) { btqDetailMap = {}; }
         const btqHafalanList = UI.csvKeArray(cfgPublik.BTQ_HAFALAN_LIST);
 
         return `
@@ -655,12 +604,11 @@
                     <option value="">— Pilih —</option>
                     ${btqTingkatList.map(function (t) { return `<option value="${UI.escapeHtml(t)}">${UI.escapeHtml(t)}</option>`; }).join("")}
                 </select>
-                <div id="blokBtqLanjutan" style="display:none;">
-                    <label>Posisi Bacaan Al-Qur'an</label>
-                    <select id="f_btqPosisi">
-                        <option value="">— Pilih —</option>
-                        ${btqPosisiList.map(function (t) { return `<option value="${UI.escapeHtml(t)}">${UI.escapeHtml(t)}</option>`; }).join("")}
-                    </select>
+                <div id="blokBtqPosisi" style="display:none;">
+                    <label id="labelBtqPosisi">Detail Bacaan</label>
+                    <select id="f_btqPosisi"><option value="">— Pilih —</option></select>
+                </div>
+                <div id="blokBtqHafalan" style="display:none;">
                     <label>Hafalan Juz <span class="opsional">(boleh pilih lebih dari 1)</span></label>
                     <div class="chip-baris" id="chipHafalan">
                         ${btqHafalanList.map(function (j) { return `<button type="button" class="chip" data-juz="${UI.escapeHtml(j)}">${UI.escapeHtml(j)}</button>`; }).join("")}
@@ -722,14 +670,34 @@
             toggleBoarding.classList.toggle("aktif", boardingAktif);
         });
 
-        // BTQ conditional
+        // BTQ conditional (tingkat -> detail bacaan, JSON map di CONFIG.BTQ_TINGKAT_DETAIL_LIST,
+        // pola sama persis dgn sub-pilihan sumber info di Survei — Bagian 6.10)
+        let btqDetailMap = {};
+        try { btqDetailMap = JSON.parse(cfgPublik.BTQ_TINGKAT_DETAIL_LIST || "{}"); } catch (e) { btqDetailMap = {}; }
+
         const selBtqTingkat = document.getElementById("f_btqTingkat");
-        const blokBtqLanjutan = document.getElementById("blokBtqLanjutan");
-        function toggleBlokBtq() { blokBtqLanjutan.style.display = selBtqTingkat.value ? "block" : "none"; }
+        const blokBtqPosisi = document.getElementById("blokBtqPosisi");
+        const selBtqPosisi = document.getElementById("f_btqPosisi");
+        const labelBtqPosisi = document.getElementById("labelBtqPosisi");
+        const blokBtqHafalan = document.getElementById("blokBtqHafalan");
+
+        function toggleBlokBtq() {
+            const tingkat = selBtqTingkat.value;
+            const opsiDetail = btqDetailMap[tingkat];
+            if (opsiDetail && opsiDetail.length) {
+                labelBtqPosisi.textContent = tingkat + " — Pilih Detail";
+                selBtqPosisi.innerHTML = '<option value="">— Pilih —</option>' + opsiDetail.map(function (o) { return `<option value="${UI.escapeHtml(o)}">${UI.escapeHtml(o)}</option>`; }).join("");
+                blokBtqPosisi.style.display = "block";
+            } else {
+                blokBtqPosisi.style.display = "none";
+                selBtqPosisi.innerHTML = "";
+            }
+            blokBtqHafalan.style.display = tingkat ? "block" : "none";
+        }
         if (d.tingkatBacaanBtq) selBtqTingkat.value = d.tingkatBacaanBtq;
         toggleBlokBtq();
+        if (d.posisiBacaanQuran) selBtqPosisi.value = d.posisiBacaanQuran;
         selBtqTingkat.addEventListener("change", toggleBlokBtq);
-        if (d.posisiBacaanQuran) document.getElementById("f_btqPosisi").value = d.posisiBacaanQuran;
 
         let hafalanTerpilih = UI.csvKeArray(d.hafalanJuzBtq);
         function renderChipHafalan() {
@@ -844,9 +812,15 @@
             </div>
 
             <div class="kartu-akun-gelap">
-                <div class="label-mini">DP PENDAFTARAN (OPSIONAL)</div>
-                <div class="nilai-besar" style="font-size:1rem; margin-top:6px;">Minimal ${UI.formatRupiah(biayaDpMin)}</div>
-                <div class="teks-lembut" style="color:#cbd5c8; margin-top:8px;">DP TIDAK wajib saat submit — bisa dibayar &amp; diupload buktinya kapan saja dari Dashboard Pendaftar setelah mendaftar.</div>
+                <div class="label-mini">AMANKAN KELAS</div>
+                <div class="nilai-besar" style="font-size:1.05rem; margin-top:6px;">Silakan lakukan DP minimal ${UI.formatRupiah(biayaDpMin)}</div>
+                ${(cfgPublik.REKENING_1 || cfgPublik.REKENING_2) ? `
+                    <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">Transfer ke nomor rekening:</div>
+                    ${cfgPublik.REKENING_1 ? `<div style="font-weight:800; color:#fff; margin-top:4px;">${UI.escapeHtml(cfgPublik.REKENING_1)}</div>` : ""}
+                    ${cfgPublik.REKENING_2 ? `<div style="font-weight:800; color:#fff; margin-top:4px;">${UI.escapeHtml(cfgPublik.REKENING_2)}</div>` : ""}
+                ` : ""}
+                <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">DP TIDAK wajib saat submit — bisa dibayar &amp; diupload buktinya kapan saja dari Dashboard Pendaftar setelah mendaftar.</div>
+                ${cfgPublik.ADMIN_WA_1_NOMOR ? `<a class="tombol tombol-wa blok" style="margin-top:12px;" target="_blank" rel="noreferrer" href="${UI.linkWA(cfgPublik.ADMIN_WA_1_NOMOR, cfgPublik.ADMIN_WA_1_NAMA, "Halo, saya sudah selesai mendaftar dan ingin konfirmasi DP.")}">${UI.ikon("wa")} Hubungi Admin Setelah Pendaftaran Selesai</a>` : ""}
             </div>
 
             <label style="display:flex; align-items:flex-start; gap:8px; font-weight:500; font-size:0.82rem; margin-top:16px;">
