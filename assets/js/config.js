@@ -13,7 +13,7 @@
 
 const APP_CONFIG = {
     // GANTI dengan URL Web App hasil deploy Apps Script (langkah 7 setup).
-    apiUrl: "GANTI_DENGAN_URL_WEB_APP_APPS_SCRIPT",
+    apiUrl: "https://script.google.com/macros/s/AKfycbz59u-nHOugJTpROlpCpUtolwid-O_NEOq8UZPKIRzB8HPW69ev6M96sLKu4c3gcphQ/exec",
 
     // Batas ukuran upload dokumen/bukti pembayaran (MB) — samakan dengan
     // Bagian 17 Master Context (dokumen jpg/jpeg/png/pdf maks 2MB).
