@@ -26,6 +26,8 @@ const UI = (() => {
         perisai: `<svg ${_svgAtribut}><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5z"></path></svg>`,
         petir: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>`,
         spinner: `<svg ${_svgAtribut} class="ikon-spin"><path d="M21 12a9 9 0 1 1-9-9"></path></svg>`,
+        mata: `<svg ${_svgAtribut}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+        mataCoret: `<svg ${_svgAtribut}><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.4 18.4 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`,
     };
 
     function ikon(nama) { return IKON[nama] || ""; }
@@ -82,5 +84,34 @@ const UI = (() => {
         return "https://wa.me/" + String(nomor || "").replace(/\D/g, "") + "?text=" + teks;
     }
 
-    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA };
+    /**
+     * Bungkus SEMUA field password di halaman dengan tombol mata
+     * tampilkan/sembunyikan. Panggil sekali setelah field password
+     * dirender ke DOM. Tidak butuh markup tambahan di HTML.
+     */
+    function pasangToggleSandi() {
+        document.querySelectorAll('input[type="password"]').forEach(function (inp) {
+            if (inp.dataset.toggleTerpasang) return;
+            inp.dataset.toggleTerpasang = "1";
+            const bungkus = document.createElement("div");
+            bungkus.style.position = "relative";
+            inp.parentNode.insertBefore(bungkus, inp);
+            bungkus.appendChild(inp);
+            inp.style.paddingRight = "38px";
+
+            const tombol = document.createElement("button");
+            tombol.type = "button";
+            tombol.innerHTML = ikon("mata");
+            tombol.style.cssText = "position:absolute; right:4px; top:50%; transform:translateY(-50%); border:none; background:none; padding:6px; color:var(--tinta-samar);";
+            bungkus.appendChild(tombol);
+
+            tombol.addEventListener("click", function () {
+                const tampil = inp.type === "text";
+                inp.type = tampil ? "password" : "text";
+                tombol.innerHTML = ikon(tampil ? "mata" : "mataCoret");
+            });
+        });
+    }
+
+    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA, pasangToggleSandi };
 })();
