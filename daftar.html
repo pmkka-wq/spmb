@@ -113,7 +113,9 @@
     // STEP 0 — LANDING (info gelombang/biaya/jadwal + 2 tombol, Bagian 9)
     // -----------------------------------------------------------------
     function htmlLanding() {
-        const biayaDaftar = cfgPublik.BIAYA_PENDAFTARAN || "0";
+        const biayaL = cfgPublik.BIAYA_PENDAFTARAN_L || cfgPublik.BIAYA_PENDAFTARAN || "0";
+        const biayaP = cfgPublik.BIAYA_PENDAFTARAN_P || cfgPublik.BIAYA_PENDAFTARAN || "0";
+        const biayaDaftar = (biayaL === biayaP) ? UI.formatRupiah(biayaL) : ("Putra " + UI.formatRupiah(biayaL) + " · Putri " + UI.formatRupiah(biayaP));
         const biayaDpMin = cfgPublik.BIAYA_DP_MIN || "0";
         const tahunAjaran = cfgPublik.TAHUN_AJARAN || "";
         const gelombangNama = cfgPublik.GELOMBANG_1_NAMA || "Gelombang Aktif";
@@ -136,7 +138,7 @@
             <div class="grid-2">
                 <div class="kartu">
                     <div class="teks-kecil">BIAYA PENDAFTARAN</div>
-                    <div style="font-weight:800; color:var(--hijau-700); margin-top:2px;">${UI.formatRupiah(biayaDaftar)}</div>
+                    <div style="font-weight:800; color:var(--hijau-700); margin-top:2px;">${biayaDaftar}</div>
                 </div>
                 <div class="kartu">
                     <div class="teks-kecil">DP MINIMAL</div>
@@ -623,6 +625,7 @@
                         return `<div class="field"><label style="margin-top:4px; font-size:0.72rem;">${UI.escapeHtml(m)}</label><input type="text" inputmode="decimal" data-mapel-rapor="${UI.escapeHtml(m)}" placeholder="0-100"></div>`;
                     }).join("")}
                 </div>
+                <div class="ringkasan-nilai" id="ringkasanNilaiRapor" style="display:none;"></div>
             </div>
 
             <div class="kartu">
@@ -632,6 +635,7 @@
                         return `<div class="field"><label style="margin-top:4px; font-size:0.72rem;">${UI.escapeHtml(m)}</label><input type="text" inputmode="decimal" data-mapel-tka="${UI.escapeHtml(m)}" placeholder="0-100"></div>`;
                     }).join("")}
                 </div>
+                <div class="ringkasan-nilai" id="ringkasanNilaiTka" style="display:none;"></div>
             </div>
 
             <label>Prestasi <span class="opsional">(opsional)</span></label>
@@ -728,6 +732,35 @@
         });
         if (d.prestasi) document.getElementById("f_prestasi").value = d.prestasi;
 
+        // Total & rata-rata otomatis (2 desimal) — dihitung di frontend saja
+        // (Bagian 3 poin 16), murni tampilan, tidak dikirim sebagai field
+        // terpisah ke server (server tetap hanya menyimpan NILAI_MAPEL_RAPOR/TKA
+        // mentah "Mapel:Nilai,...").
+        function hitungRingkasanNilai(selektor, targetId) {
+            const target = document.getElementById(targetId);
+            const nilaiValid = [];
+            document.querySelectorAll(selektor).forEach(function (el) {
+                const v = parseFloat(el.value.trim().replace(",", "."));
+                if (!isNaN(v)) nilaiValid.push(v);
+            });
+            if (!nilaiValid.length) { target.style.display = "none"; return; }
+            const total = nilaiValid.reduce(function (a, b) { return a + b; }, 0);
+            const rata = total / nilaiValid.length;
+            target.style.display = "flex";
+            target.innerHTML =
+                `<span>Total: <strong>${total.toFixed(2)}</strong></span>` +
+                `<span>Rata-rata: <strong>${rata.toFixed(2)}</strong></span>` +
+                `<span>${nilaiValid.length} nilai terisi</span>`;
+        }
+        function pasangListenerNilai(selektor, targetId) {
+            hitungRingkasanNilai(selektor, targetId);
+            document.querySelectorAll(selektor).forEach(function (el) {
+                el.addEventListener("input", function () { hitungRingkasanNilai(selektor, targetId); });
+            });
+        }
+        pasangListenerNilai("[data-mapel-rapor]", "ringkasanNilaiRapor");
+        pasangListenerNilai("[data-mapel-tka]", "ringkasanNilaiTka");
+
         document.getElementById("btnKembaliStep3").addEventListener("click", function () {
             langkahSaatIni = 2; simpanDraft(); render();
         });
@@ -793,6 +826,7 @@
                 <div class="teks-kecil">DATA SISWA</div>
                 <div style="font-weight:800; margin-top:2px;">${UI.escapeHtml(d.namaLengkap || "-")}</div>
                 <div class="teks-lembut">NISN ${UI.escapeHtml(d.nisn || "-")} · ${UI.escapeHtml(d.jenisKelamin || "-")}</div>
+                <div class="teks-lembut">Asal Sekolah: ${UI.escapeHtml(d.asalSekolah || "-")}</div>
                 <div class="teks-lembut">${UI.escapeHtml(d.alamat || "-")}</div>
             </div>
 
@@ -819,7 +853,7 @@
                     ${cfgPublik.REKENING_1 ? `<div style="font-weight:800; color:#fff; margin-top:4px;">${UI.escapeHtml(cfgPublik.REKENING_1)}</div>` : ""}
                     ${cfgPublik.REKENING_2 ? `<div style="font-weight:800; color:#fff; margin-top:4px;">${UI.escapeHtml(cfgPublik.REKENING_2)}</div>` : ""}
                 ` : ""}
-                <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">DP TIDAK wajib saat submit — bisa dibayar &amp; diupload buktinya kapan saja dari Dashboard Pendaftar setelah mendaftar.</div>
+                <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">Amankan kelas pilihanmu sekarang juga dengan membayar DP minimal — bisa dibayar &amp; diupload buktinya kapan saja dari Dashboard Pendaftar setelah mendaftar.</div>
                 ${cfgPublik.ADMIN_WA_1_NOMOR ? `<a class="tombol tombol-wa blok" style="margin-top:12px;" target="_blank" rel="noreferrer" href="${UI.linkWA(cfgPublik.ADMIN_WA_1_NOMOR, cfgPublik.ADMIN_WA_1_NAMA, "Halo, saya sudah selesai mendaftar dan ingin konfirmasi DP.")}">${UI.ikon("wa")} Hubungi Admin Setelah Pendaftaran Selesai</a>` : ""}
             </div>
 

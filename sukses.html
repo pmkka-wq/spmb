@@ -26,6 +26,7 @@
 <script>
     let akun = null;
     let cfgPublik = {};
+    let loginPromise = null;
 
     async function mulai() {
         const raw = sessionStorage.getItem("SPMB_AKUN_BARU");
@@ -38,21 +39,24 @@
         }
         akun = JSON.parse(raw);
 
+        // Login diam-diam dimulai LANGSUNG dan berjalan paralel dgn pemuatan
+        // CONFIG (dulu berurutan -> halaman terasa lama). Halaman tampil
+        // begitu CONFIG siap; login diselesaikan di latar dan ditunggu hanya
+        // saat tombol dashboard / kirim survei diklik.
+        if (!API.sesiInfo().adaToken) {
+            loginPromise = API.login(akun.noHp, akun.noPendaftaran, akun.pin)
+                .then(function (res) { return res && res.ok; })
+                .catch(function () { return false; });
+        } else {
+            loginPromise = Promise.resolve(true);
+        }
+
         try {
             const resConfig = await API.getConfig();
             cfgPublik = (resConfig.ok && resConfig.data) ? resConfig.data : {};
             if (cfgPublik.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").innerHTML = cfgPublik.NAMA_APLIKASI;
             if (cfgPublik.NAMA_SEKOLAH) document.getElementById("txtNamaSekolah").textContent = cfgPublik.NAMA_SEKOLAH;
         } catch (err) { /* CONFIG gagal dimuat bukan blocking di halaman ini */ }
-
-        // Login "diam-diam" pakai kredensial yang baru dibuat, supaya klik
-        // "Masuk ke Dashboard" nanti langsung masuk TANPA perlu isi ulang
-        // form login. Kalau gagal (mis. gerbang tertutup atau rate limit),
-        // tombol di bawah tetap mengarah ke login.html sebagai fallback —
-        // bukan blocking halaman sukses ini.
-        try {
-            if (!API.sesiInfo().adaToken) await API.login(akun.noHp, akun.noPendaftaran, akun.pin);
-        } catch (err) { /* fallback ke login manual, tidak fatal */ }
 
         document.getElementById("areaMuat").style.display = "none";
         document.getElementById("areaKonten").style.display = "block";
@@ -92,9 +96,16 @@
             ${htmlTombolWA()}
 
             <div style="margin-top:18px;">
-                <a class="tombol utama blok" href="${API.sesiInfo().adaToken ? "dashboard.html" : "login.html"}">${API.sesiInfo().adaToken ? "Masuk ke Dashboard Pendaftar" : "Login ke Dashboard Pendaftar"} ${UI.ikon("panah")}</a>
+                <button type="button" class="utama blok" id="btnKeDashboard">Masuk ke Dashboard Pendaftar ${UI.ikon("panah")}</button>
             </div>
         `;
+
+        document.getElementById("btnKeDashboard").addEventListener("click", async function (e) {
+            const btn = e.currentTarget;
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Membuka dashboard…";
+            const berhasil = await loginPromise;
+            window.location.href = (berhasil && API.sesiInfo().adaToken) ? "dashboard.html" : "login.html";
+        });
 
         document.getElementById("btnSalin").addEventListener("click", function () {
             const teks = "INFORMASI AKUN SPMB\nNo. Pendaftaran: " + akun.noPendaftaran + "\nNo. HP: " + akun.noHp + "\nPIN Login: " + akun.pin;
@@ -105,13 +116,17 @@
     }
 
     function htmlTombolWA() {
-        const admin1Nama = cfgPublik.ADMIN_WA_1_NAMA, admin1No = cfgPublik.ADMIN_WA_1_NOMOR;
-        const admin2Nama = cfgPublik.ADMIN_WA_2_NAMA, admin2No = cfgPublik.ADMIN_WA_2_NOMOR;
-        if (!admin1No && !admin2No) return "";
-        let tombol = "";
-        if (admin1No) tombol += `<a class="tombol tombol-wa" target="_blank" rel="noreferrer" href="${UI.linkWA(admin1No, admin1Nama)}">${UI.ikon("wa")} ${UI.escapeHtml(admin1Nama || "WA Admin 1")}</a>`;
-        if (admin2No) tombol += `<a class="tombol tombol-wa" target="_blank" rel="noreferrer" href="${UI.linkWA(admin2No, admin2Nama)}">${UI.ikon("wa")} ${UI.escapeHtml(admin2Nama || "WA Admin 2")}</a>`;
-        return `<h3 style="margin-top:18px;">Butuh Bantuan?</h3><div class="tombol-wa-grid">${tombol}</div>`;
+        const daftar = [
+            [cfgPublik.ADMIN_WA_1_NAMA, cfgPublik.ADMIN_WA_1_NOMOR],
+            [cfgPublik.ADMIN_WA_2_NAMA, cfgPublik.ADMIN_WA_2_NOMOR],
+        ].filter(function (x) { return x[1]; });
+        if (!daftar.length) return "";
+        const pesan = "Assalamu'alaikum, saya " + (akun.namaLengkap || "calon siswa") + " (No. Pendaftaran " + akun.noPendaftaran + ") sudah mendaftar SPMB dan ingin konfirmasi.";
+        return `<h3 style="margin-top:18px;">Hubungi Admin</h3>
+            <p class="teks-lembut" style="margin-top:-4px;">Ada pertanyaan atau ingin konfirmasi DP? Hubungi admin berikut via WhatsApp.</p>
+            <div style="display:grid; gap:8px;">${daftar.map(function (x, i) {
+                return `<a class="tombol tombol-wa blok" style="font-size:0.8rem; text-align:left;" target="_blank" rel="noreferrer" href="${UI.linkWA(x[1], x[0], pesan)}">${UI.ikon("wa")} <span><strong>${UI.escapeHtml(x[0] || "Admin " + (i + 1))}</strong><br><span style="font-weight:500;">${UI.escapeHtml(x[1])}</span></span></a>`;
+            }).join("")}</div>`;
     }
 
     // -----------------------------------------------------------------
@@ -193,14 +208,13 @@
 
             sudahDikirim = true;
             const btn = document.getElementById("btnKirimSurvei");
-            btn.disabled = true; btn.textContent = "Mengirim…";
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Mengirim…";
 
             try {
-                // Kalau belum ada sesi aktif (kasus normal — pendaftar baru
-                // saja submit, belum login), login diam-diam dulu.
-                if (!API.sesiInfo().adaToken) {
-                    const resLogin = await API.login(akun.noHp, akun.noPendaftaran, akun.pin);
-                    if (!resLogin.ok) throw new Error(resLogin.pesan);
+                // Tunggu login diam-diam (sudah berjalan sejak halaman dibuka).
+                const loginOk = await loginPromise;
+                if (!loginOk && !API.sesiInfo().adaToken) {
+                    throw new Error("Sesi otomatis belum siap. Survei bisa diisi nanti setelah login ke dashboard.");
                 }
                 const res = await API.submitSurvei(alasanTerpilih.join(", "), sumberTerpilih, petaSub[sumberTerpilih] ? selSubSumber.value : "");
                 if (!res.ok) throw new Error(res.pesan);

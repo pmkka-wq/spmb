@@ -18,6 +18,12 @@
     .subtab-btn.aktif { color: var(--hijau-600); border-bottom-color: var(--hijau-600); }
     .kartu-ringkas { background: var(--panel); border: 1px solid var(--garis); border-radius: var(--radius-kecil); padding: 14px; text-align: center; cursor: pointer; }
     .kartu-ringkas .angka { font-size: 1.5rem; font-weight: 800; color: var(--hijau-700); }
+    .modal-latar { position: fixed; inset: 0; background: rgba(15,30,20,0.55); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 16px; }
+    .modal-kotak { background: #fff; border-radius: 16px; padding: 18px; width: 100%; max-width: 380px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); }
+    .bagian-judul { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; color: var(--hijau-700); text-transform: uppercase; margin: 0 0 8px; }
+    .baris-info { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--garis-lembut); font-size: 0.8rem; }
+    .baris-info span:first-child { color: var(--tinta-lembut); }
+    .baris-info span:last-child { font-weight: 700; text-align: right; word-break: break-word; }
     .kartu-ringkas .label { font-size: 0.68rem; color: var(--tinta-lembut); font-weight: 700; }
 </style>
 </head>
@@ -43,6 +49,7 @@
     let cfgPublik = {};
     let viewAktif = "beranda";
     let noPendaftaranDetail = null;
+    let detailAktif = null;
     let subTabDetail = "diri";
     let filterPendaftar = { status: "", gelombang: "", cari: "", page: 1 };
 
@@ -53,14 +60,13 @@
         if (!API.sesiInfo().adaToken) { window.location.href = "login.html?panel=sekolah"; return; }
 
         try {
-            const resVerify = await API.verifyToken();
+            // Paralel (bukan berurutan) -> waktu muat awal berkurang separuh.
+            const [resVerify, resConfig] = await Promise.all([API.verifyToken(), API.getConfig()]);
             if (!resVerify.ok || (resVerify.data.role !== "petugas" && resVerify.data.role !== "admin")) {
                 window.location.href = "login.html?panel=sekolah";
                 return;
             }
             sesi = resVerify.data;
-
-            const resConfig = await API.getConfig();
             cfgPublik = (resConfig.ok && resConfig.data) ? resConfig.data : {};
             if (cfgPublik.NAMA_APLIKASI) document.getElementById("txtNamaAplikasi").innerHTML = cfgPublik.NAMA_APLIKASI;
 
@@ -73,8 +79,10 @@
         }
     }
 
-    async function keluar() {
-        await API.logout();
+    function keluar() {
+        const btn = document.getElementById("btnKeluar");
+        if (btn) { btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Keluar…"; }
+        API.logout().catch(function () { /* diamkan, tidak blocking */ });
         window.location.href = "login.html?panel=sekolah";
     }
 
@@ -133,34 +141,140 @@
     }
 
     // -----------------------------------------------------------------
-    // BERANDA / WORKLIST (Bagian 11)
+    // HELPER BERSAMA
     // -----------------------------------------------------------------
-    async function renderBeranda() {
+    // Label tampilan status. Nilai di database TIDAK diubah (state machine
+    // Bagian 4 tetap), hanya cara menampilkannya:
+    //   Daftar Ulang -> "Menunggu Daftar Ulang", Selesai -> "Diterima".
+    const LABEL_STATUS = { "Daftar Ulang": "Menunggu Daftar Ulang", "Selesai": "Diterima" };
+    function labelStatus(s) { return LABEL_STATUS[s] || s || "-"; }
+    function warnaStatus(s) {
+        if (s === "Perlu Perbaikan") return "amber";
+        if (s === "Selesai" || s === "Terverifikasi") return "hijau";
+        return "biru";
+    }
+    function badgeStatus(s) { return `<span class="badge ${warnaStatus(s)}">${UI.escapeHtml(labelStatus(s))}</span>`; }
+
+    /** Modal sederhana. Mengembalikan Promise<{ok, nilai}>; ok=false jika dibatalkan. */
+    function modal(opsi) {
+        return new Promise(function (resolve) {
+            const latar = document.createElement("div");
+            latar.className = "modal-latar";
+            latar.innerHTML = `
+                <div class="modal-kotak">
+                    <h3 style="margin:0 0 8px;">${UI.escapeHtml(opsi.judul || "")}</h3>
+                    <div class="teks-lembut" style="margin-bottom:10px;">${opsi.isiHtml || ""}</div>
+                    ${opsi.input === "teks" ? `<input type="text" id="modalInput" placeholder="${UI.escapeHtml(opsi.placeholder || "")}" autocomplete="off">` : ""}
+                    ${opsi.input === "area" ? `<textarea id="modalInput" rows="3" placeholder="${UI.escapeHtml(opsi.placeholder || "")}"></textarea>` : ""}
+                    <div class="pesan-error-umum" id="modalError"></div>
+                    <div style="display:flex; gap:8px; margin-top:14px;">
+                        <button type="button" id="modalBatal" style="flex:1;">Batal</button>
+                        <button type="button" class="utama" id="modalOk" style="flex:1;">${UI.escapeHtml(opsi.tombolOk || "OK")}</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(latar);
+            const inp = latar.querySelector("#modalInput");
+            const btnOk = latar.querySelector("#modalOk");
+            if (inp) inp.focus();
+            function tutup(hasil) { latar.remove(); resolve(hasil); }
+            function cekValid() {
+                if (opsi.wajibKata) btnOk.disabled = !inp || inp.value !== opsi.wajibKata;
+            }
+            if (opsi.wajibKata) { btnOk.disabled = true; if (inp) inp.addEventListener("input", cekValid); }
+            latar.querySelector("#modalBatal").addEventListener("click", function () { tutup({ ok: false }); });
+            btnOk.addEventListener("click", function () {
+                const nilai = inp ? inp.value.trim() : "";
+                if (opsi.input && opsi.wajibIsi && !nilai) {
+                    const eb = latar.querySelector("#modalError");
+                    eb.textContent = opsi.pesanWajib || "Wajib diisi."; eb.classList.add("tampil"); return;
+                }
+                tutup({ ok: true, nilai: inp ? inp.value : "" });
+            });
+        });
+    }
+
+    // -----------------------------------------------------------------
+    // BERANDA = RINGKASAN STATISTIK (Bagian 11/12). Data dari 1 panggilan
+    // adminStatistik (cache server 5 menit) — bukan lagi 3 panggilan list.
+    // -----------------------------------------------------------------
+    function fmtAngka(n) { return Number(n || 0).toLocaleString("id-ID"); }
+    function fmtDesimal(n) { return (n === null || n === undefined) ? "-" : Number(n).toFixed(2); }
+
+    function barisNilai(peta) {
+        const kunci = Object.keys(peta || {});
+        if (!kunci.length) return '<div class="teks-lembut">Belum ada data nilai.</div>';
+        return `<div style="overflow-x:auto;"><table class="tabel-data"><thead><tr><th>Mapel</th><th>Jml</th><th>Tertinggi</th><th>Terendah</th><th>Rata-rata</th></tr></thead><tbody>` +
+            kunci.map(function (m) {
+                const s = peta[m];
+                return `<tr style="cursor:default;"><td>${UI.escapeHtml(m)}</td><td>${s.jumlah}</td><td>${fmtDesimal(s.tertinggi)}</td><td>${fmtDesimal(s.terendah)}</td><td><strong>${fmtDesimal(s.rata)}</strong></td></tr>`;
+            }).join("") + `</tbody></table></div>`;
+    }
+
+    async function renderBeranda(paksaRefresh) {
         const isiTab = document.getElementById("isiTab");
-        isiTab.innerHTML = '<div class="pemuat"><div class="spinner"></div>Menghitung worklist…</div>';
-
+        isiTab.innerHTML = '<div class="pemuat"><div class="spinner"></div>Memuat statistik…</div>';
         try {
-            const [rMenunggu, rPerbaikan, rTerverifikasi] = await Promise.all([
-                API.adminGetPendaftar({ status: "Menunggu Verifikasi", pageSize: 1 }),
-                API.adminGetPendaftar({ status: "Perlu Perbaikan", pageSize: 1 }),
-                API.adminGetPendaftar({ status: "Terverifikasi", pageSize: 1 }),
-            ]);
-
-            const total = function (r) { return (r.ok && r.data) ? r.data.total : 0; };
+            const res = await API.adminStatistik(paksaRefresh === true);
+            if (!res.ok) { isiTab.innerHTML = '<div class="pesan-error-umum tampil">' + UI.escapeHtml(res.pesan) + '</div>'; return; }
+            const d = res.data;
+            const kelasKunci = Object.keys(d.perKelas || {}).sort(function (a, b) { return d.perKelas[b].jumlah - d.perKelas[a].jumlah; });
+            const perbaikan = d.perStatus["Perlu Perbaikan"] || 0;
+            const menungguVerif = d.perStatus["Menunggu Verifikasi"] || 0;
 
             isiTab.innerHTML = `
-                <h3 style="margin-bottom:10px;">Worklist</h3>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3 style="margin:0;">Ringkasan</h3>
+                    <button type="button" id="btnRefreshStat" style="padding:6px 10px; font-size:0.7rem;">Perbarui</button>
+                </div>
                 <div class="grid-2">
-                    <div class="kartu-ringkas" data-status="Menunggu Verifikasi"><div class="angka">${total(rMenunggu)}</div><div class="label">Menunggu Verifikasi</div></div>
-                    <div class="kartu-ringkas" data-status="Perlu Perbaikan"><div class="angka">${total(rPerbaikan)}</div><div class="label">Perlu Perbaikan</div></div>
+                    <div class="kartu-ringkas" data-status=""><div class="angka">${fmtAngka(d.totalPendaftar)}</div><div class="label">Total Pendaftar</div></div>
+                    <div class="kartu-ringkas" data-status="Selesai"><div class="angka">${fmtAngka(d.diterima)}</div><div class="label">Diterima (Lunas)</div></div>
                 </div>
                 <div style="height:8px;"></div>
                 <div class="grid-2">
-                    <div class="kartu-ringkas" data-status="Terverifikasi"><div class="angka">${total(rTerverifikasi)}</div><div class="label">Terverifikasi</div></div>
-                    <div class="kartu-ringkas" data-status=""><div class="angka">${UI.ikon("panah")}</div><div class="label">Lihat Semua Pendaftar</div></div>
+                    <div class="kartu-ringkas" data-status="Daftar Ulang"><div class="angka">${fmtAngka(d.menungguDaftarUlang)}</div><div class="label">Menunggu Daftar Ulang</div></div>
+                    <div class="kartu-ringkas" data-status=""><div class="angka">${fmtAngka(d.boarding)}</div><div class="label">Boarding</div></div>
                 </div>
-                <div class="catatan hijau" style="margin-top:16px;">${UI.ikon("info")}<span>Konfirmasi pembayaran belum punya penghitung ringkasan tersendiri di fase ini — cek langsung dari Data Pendaftar &gt; buka detail &gt; tab Pembayaran.</span></div>
+                <div style="height:8px;"></div>
+                <div class="kartu" style="text-align:center;">
+                    <div class="teks-kecil">TOTAL UANG MASUK (TERKONFIRMASI)</div>
+                    <div class="angka" style="font-size:1.4rem; font-weight:800; color:var(--hijau-700);">${UI.formatRupiah(d.totalUangMasuk)}</div>
+                </div>
+
+                <h3 style="margin:16px 0 8px;">Perlu Ditindaklanjuti</h3>
+                <div class="grid-2">
+                    <div class="kartu-ringkas" data-status="Menunggu Verifikasi"><div class="angka">${fmtAngka(menungguVerif)}</div><div class="label">Menunggu Verifikasi</div></div>
+                    <div class="kartu-ringkas" data-status="Perlu Perbaikan"><div class="angka">${fmtAngka(perbaikan)}</div><div class="label">Perlu Perbaikan</div></div>
+                </div>
+                <div class="teks-kecil" style="margin-top:8px;">${fmtAngka(d.pembayaranMenunggu)} pembayaran menunggu konfirmasi · ${fmtAngka(d.dokumenMenunggu)} dokumen menunggu verifikasi</div>
+
+                <h3 style="margin:16px 0 8px;">Pendaftar per Kelas Peminatan</h3>
+                <div class="kartu">
+                    ${kelasKunci.length ? `<table class="tabel-data"><thead><tr><th>Kelas</th><th>Pendaftar</th><th>Boarding</th><th>Diterima</th></tr></thead><tbody>
+                        ${kelasKunci.map(function (k) { const x = d.perKelas[k]; return `<tr style="cursor:default;"><td>${UI.escapeHtml(k)}</td><td><strong>${x.jumlah}</strong></td><td>${x.boarding}</td><td>${x.lunas}</td></tr>`; }).join("")}
+                    </tbody></table>` : '<div class="teks-lembut">Belum ada pendaftar.</div>'}
+                </div>
+
+                <h3 style="margin:16px 0 8px;">Per Gelombang &amp; Jenis Kelamin</h3>
+                <div class="kartu">
+                    <div class="teks-lembut">${Object.keys(d.perGelombang).map(function (k) { return "Gelombang " + UI.escapeHtml(k) + ": <strong>" + d.perGelombang[k] + "</strong>"; }).join(" · ") || "-"}</div>
+                    <div class="teks-lembut" style="margin-top:4px;">${Object.keys(d.perGender).map(function (k) { return UI.escapeHtml(k) + ": <strong>" + d.perGender[k] + "</strong>"; }).join(" · ") || "-"}</div>
+                </div>
+
+                <h3 style="margin:16px 0 8px;">Statistik Nilai Rapor</h3>
+                <div class="kartu">${barisNilai(d.nilaiRapor.perMapel)}
+                    ${d.nilaiRapor.gabungan ? `<div class="ringkasan-nilai"><span>Rata-rata gabungan siswa — Tertinggi: <strong>${fmtDesimal(d.nilaiRapor.gabungan.tertinggi)}</strong></span><span>Terendah: <strong>${fmtDesimal(d.nilaiRapor.gabungan.terendah)}</strong></span><span>Rata-rata: <strong>${fmtDesimal(d.nilaiRapor.gabungan.rata)}</strong></span></div>` : ""}
+                </div>
+                <h3 style="margin:16px 0 8px;">Statistik Nilai TKA</h3>
+                <div class="kartu">${barisNilai(d.nilaiTka.perMapel)}
+                    ${d.nilaiTka.gabungan ? `<div class="ringkasan-nilai"><span>Rata-rata gabungan siswa — Tertinggi: <strong>${fmtDesimal(d.nilaiTka.gabungan.tertinggi)}</strong></span><span>Terendah: <strong>${fmtDesimal(d.nilaiTka.gabungan.terendah)}</strong></span><span>Rata-rata: <strong>${fmtDesimal(d.nilaiTka.gabungan.rata)}</strong></span></div>` : ""}
+                </div>
+                <div class="teks-kecil" style="margin-top:8px;">Diperbarui: ${UI.formatTanggal(d.diperbarui)} (data di-cache maks. 5 menit)</div>
             `;
+            document.getElementById("btnRefreshStat").addEventListener("click", function (e) {
+                e.currentTarget.disabled = true; e.currentTarget.innerHTML = UI.ikon("spinner") + " Memuat…";
+                renderBeranda(true);
+            });
             document.querySelectorAll(".kartu-ringkas").forEach(function (el) {
                 el.addEventListener("click", function () {
                     filterPendaftar = { status: el.getAttribute("data-status"), gelombang: "", cari: "", page: 1 };
@@ -169,7 +283,7 @@
                 });
             });
         } catch (err) {
-            isiTab.innerHTML = '<div class="pesan-error-umum tampil">Gagal memuat worklist: ' + UI.escapeHtml(err.message) + '</div>';
+            isiTab.innerHTML = '<div class="pesan-error-umum tampil">Gagal memuat statistik: ' + UI.escapeHtml(err.message) + '</div>';
         }
     }
 
@@ -179,13 +293,14 @@
     async function renderPendaftar() {
         const isiTab = document.getElementById("isiTab");
         const statusList = ["", "Menunggu Verifikasi", "Perlu Perbaikan", "Terverifikasi", "Daftar Ulang", "Selesai"];
+        const labelOpsi = function (x) { return x ? labelStatus(x) : "Semua Status"; };
 
         isiTab.innerHTML = `
             <div class="grup-2kolom">
                 <div class="field">
                     <label style="margin-top:0;">Status</label>
                     <select id="fFilterStatus">
-                        ${statusList.map(function (s) { return `<option value="${s}" ${filterPendaftar.status === s ? "selected" : ""}>${s || "Semua Status"}</option>`; }).join("")}
+                        ${statusList.map(function (s) { return `<option value="${s}" ${filterPendaftar.status === s ? "selected" : ""}>${labelOpsi(s)}</option>`; }).join("")}
                     </select>
                 </div>
                 <div class="field">
@@ -225,14 +340,15 @@
             wadah.innerHTML = `
                 <div style="overflow-x:auto; margin-top:10px;">
                     <table class="tabel-data">
-                        <thead><tr><th>Nama</th><th>No. Reg</th><th>Kelas</th><th>Status</th></tr></thead>
+                        <thead><tr><th>Nama · NISN</th><th>No. Reg</th><th>Asal Sekolah</th><th>Kelas</th><th>Status</th></tr></thead>
                         <tbody>
                             ${rows.map(function (r) {
                                 return `<tr data-no="${UI.escapeHtml(r.NO_PENDAFTARAN)}">
-                                    <td>${UI.escapeHtml(r.NAMA_LENGKAP)}</td>
+                                    <td><strong>${UI.escapeHtml(r.NAMA_LENGKAP)}</strong><div class="teks-kecil">${UI.escapeHtml(r.NISN || "-")}</div></td>
                                     <td>${UI.escapeHtml(r.NO_PENDAFTARAN)}</td>
+                                    <td>${UI.escapeHtml(r.ASAL_SEKOLAH || "-")}</td>
                                     <td>${UI.escapeHtml(r.KELAS_PEMINATAN || "-")}</td>
-                                    <td><span class="badge ${r.STATUS_PENDAFTARAN === "Perlu Perbaikan" ? "amber" : (r.STATUS_PENDAFTARAN === "Selesai" || r.STATUS_PENDAFTARAN === "Terverifikasi" ? "hijau" : "biru")}">${UI.escapeHtml(r.STATUS_PENDAFTARAN)}</span></td>
+                                    <td>${badgeStatus(r.STATUS_PENDAFTARAN)}</td>
                                 </tr>`;
                             }).join("")}
                         </tbody>
@@ -274,13 +390,24 @@
             isiTab.innerHTML = '<div class="pesan-error-umum tampil">Error jaringan: ' + UI.escapeHtml(err.message) + '</div>';
             return;
         }
+        detailAktif = detail;
+        const p = detail.pendaftar;
+        const templateWA = cfgPublik.WA_TEMPLATE_HUBUNGI_PENDAFTAR || "Assalamu'alaikum bapak/ibu calon wali siswa dari {nama_pendaftar} dengan nomor pendaftaran {no_pendaftaran}.";
+        const pesanWA = UI.isiTemplate(templateWA, { nama_pendaftar: p.NAMA_LENGKAP, no_pendaftaran: p.NO_PENDAFTARAN });
 
         isiTab.innerHTML = `
             <button type="button" class="tombol teks" id="btnKembaliList" style="padding-left:0;">${UI.ikon("panahKiri")} Kembali ke Daftar</button>
-            <h2 style="margin:6px 0 2px;">${UI.escapeHtml(detail.pendaftar.NAMA_LENGKAP)}</h2>
-            <div class="teks-lembut">${UI.escapeHtml(detail.pendaftar.NO_PENDAFTARAN)} · <span class="badge biru">${UI.escapeHtml(detail.pendaftar.STATUS_PENDAFTARAN)}</span></div>
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                <div>
+                    <h2 style="margin:6px 0 2px;">${UI.escapeHtml(p.NAMA_LENGKAP)}</h2>
+                    <div class="teks-lembut">NISN ${UI.escapeHtml(p.NISN || "-")} · ${UI.escapeHtml(p.NO_PENDAFTARAN)}</div>
+                    <div class="teks-lembut">${UI.escapeHtml(p.ASAL_SEKOLAH || "-")}</div>
+                    <div style="margin-top:6px;">${badgeStatus(p.STATUS_PENDAFTARAN)}</div>
+                </div>
+                ${p.NO_HP ? `<a class="tombol tombol-wa" style="margin-top:6px;" target="_blank" rel="noreferrer" href="${UI.linkWA(p.NO_HP, "", pesanWA)}">${UI.ikon("wa")} Hubungi Pendaftar</a>` : ""}
+            </div>
             <div class="subtab-bar" style="margin-top:14px;">
-                <button type="button" class="subtab-btn" data-sub="diri">Data Diri</button>
+                <button type="button" class="subtab-btn" data-sub="diri">Data Lengkap</button>
                 <button type="button" class="subtab-btn" data-sub="dokumen">Dokumen</button>
                 <button type="button" class="subtab-btn" data-sub="pembayaran">Pembayaran</button>
             </div>
@@ -289,7 +416,11 @@
         document.getElementById("btnKembaliList").addEventListener("click", function () { viewAktif = "pendaftar"; render(); });
         document.querySelectorAll(".subtab-btn").forEach(function (btn) {
             btn.classList.toggle("aktif", btn.getAttribute("data-sub") === subTabDetail);
-            btn.addEventListener("click", function () { subTabDetail = btn.getAttribute("data-sub"); renderSubDetail(detail); });
+            btn.addEventListener("click", function () {
+                subTabDetail = btn.getAttribute("data-sub");
+                document.querySelectorAll(".subtab-btn").forEach(function (b) { b.classList.toggle("aktif", b === btn); });
+                renderSubDetail(detail);
+            });
         });
         renderSubDetail(detail);
     }
@@ -301,35 +432,93 @@
         if (subTabDetail === "pembayaran") { renderSubPembayaran(detail, wadah); return; }
     }
 
+    // Definisi field per bagian -> form dibangun otomatis, hirarki jelas.
+    // [key, label, tipe]  tipe: t=teks, a=textarea, s=select (opsi di bawah)
+    const BAGIAN_DATA = [
+        { judul: "A. Data Calon Siswa", field: [
+            ["NAMA_LENGKAP", "Nama Lengkap", "t"], ["NISN", "NISN", "t"], ["JENIS_KELAMIN", "Jenis Kelamin", "jk"],
+            ["TEMPAT_TGL_LAHIR", "Tempat, Tanggal Lahir", "t"], ["ASAL_SEKOLAH", "Asal Sekolah", "t"],
+            ["ALAMAT", "Alamat", "a"], ["ANAK_KE", "Anak ke-", "t"], ["JUMLAH_SAUDARA", "Jumlah Saudara", "t"],
+            ["NO_HP", "No. HP", "t"], ["EMAIL", "Email", "t"],
+        ] },
+        { judul: "B. Data Ayah", field: [
+            ["NAMA_AYAH", "Nama Ayah", "t"], ["PEKERJAAN_AYAH", "Pekerjaan", "t"], ["NO_HP_AYAH", "No. HP", "t"],
+            ["ALAMAT_AYAH", "Alamat", "a"], ["SUDAH_ALMARHUM_AYAH", "Almarhum?", "yn"],
+        ] },
+        { judul: "C. Data Ibu", field: [
+            ["NAMA_IBU", "Nama Ibu", "t"], ["PEKERJAAN_IBU", "Pekerjaan", "t"], ["NO_HP_IBU", "No. HP", "t"],
+            ["ALAMAT_IBU", "Alamat", "a"], ["SUDAH_ALMARHUM_IBU", "Almarhum?", "yn"],
+        ] },
+        { judul: "D. Data Wali", field: [
+            ["NAMA_WALI", "Nama Wali", "t"], ["HUBUNGAN_WALI", "Hubungan", "t"], ["NO_HP_WALI", "No. HP", "t"],
+        ] },
+        { judul: "E. Pilihan Sekolah & BTQ", field: [
+            ["KELAS_PEMINATAN", "Kelas Peminatan", "kelas"], ["BOARDING", "Boarding", "yt"], ["GELOMBANG", "Gelombang", "gel"],
+            ["TINGKAT_BACAAN_BTQ", "Tingkat Bacaan BTQ", "t"], ["POSISI_BACAAN_QURAN", "Posisi Bacaan", "t"], ["HAFALAN_JUZ_BTQ", "Hafalan (Juz)", "t"],
+        ] },
+    ];
+
+    function parseNilaiStr(str) {
+        const o = {};
+        String(str || "").split(",").forEach(function (pair) {
+            const kv = pair.split(":");
+            if (kv.length === 2 && kv[0].trim()) o[kv[0].trim()] = kv[1].trim();
+        });
+        return o;
+    }
+
+    function inputField(p, f) {
+        const [k, label, tipe] = f;
+        const v = p[k] == null ? "" : String(p[k]);
+        let ctrl;
+        if (tipe === "a") ctrl = `<textarea rows="2" data-k="${k}">${UI.escapeHtml(v)}</textarea>`;
+        else if (tipe === "jk" || tipe === "yn" || tipe === "yt" || tipe === "kelas") {
+            let opsi = tipe === "jk" ? ["Laki-laki", "Perempuan"] : (tipe === "kelas" ? UI.csvKeArray(cfgPublik.KELAS_PEMINATAN_LIST) : ["Ya", "Tidak"]);
+            if (v && opsi.indexOf(v) === -1) opsi = [v].concat(opsi);
+            ctrl = `<select data-k="${k}"><option value=""></option>${opsi.map(function (o) { return `<option value="${UI.escapeHtml(o)}" ${o === v ? "selected" : ""}>${UI.escapeHtml(o)}</option>`; }).join("")}</select>`;
+        } else if (tipe === "gel") {
+            ctrl = `<input type="text" data-k="${k}" value="${UI.escapeHtml(v)}" ${isAdmin() ? "" : "disabled"}>`;
+        } else ctrl = `<input type="text" data-k="${k}" value="${UI.escapeHtml(v)}">`;
+        return `<div class="field"><label style="margin-top:6px; font-size:0.72rem;">${label}</label>${ctrl}</div>`;
+    }
+
+    function blokNilai(judul, kolom, mapelConfig, p) {
+        const data = parseNilaiStr(p[kolom]);
+        const semua = UI.csvKeArray(mapelConfig);
+        Object.keys(data).forEach(function (m) { if (semua.indexOf(m) === -1) semua.push(m); });
+        return `<div class="bagian-judul" style="margin-top:12px;">${judul}</div>
+            <div class="grid-2">${semua.map(function (m) {
+                return `<div class="field"><label style="margin-top:4px; font-size:0.72rem;">${UI.escapeHtml(m)}</label><input type="text" inputmode="decimal" data-nilai="${kolom}" data-mapel="${UI.escapeHtml(m)}" value="${UI.escapeHtml(data[m] || "")}"></div>`;
+            }).join("")}</div>
+            <div class="ringkasan-nilai" data-ringkas="${kolom}" style="display:none;"></div>`;
+    }
+
     function renderSubDataDiri(detail, wadah) {
         const p = detail.pendaftar;
-        const kelasList = UI.csvKeArray(cfgPublik.KELAS_PEMINATAN_LIST);
         wadah.innerHTML = `
+            ${BAGIAN_DATA.map(function (b) {
+                return `<div class="kartu"><div class="bagian-judul">${b.judul}</div>${b.field.map(function (f) { return inputField(p, f); }).join("")}
+                    ${b.judul.indexOf("E.") === 0 ? `<div id="blokAlasanPindah" style="display:none;"><div class="field"><label style="margin-top:6px; font-size:0.72rem;">Alasan Pindah Kelas (wajib)</label><input type="text" id="fAlasanPindah"></div></div>` : ""}
+                </div>`;
+            }).join("")}
             <div class="kartu">
-                <label style="margin-top:0;">Kelas Peminatan <span class="opsional">(pindah kelas wajib isi alasan)</span></label>
-                <select id="fEditKelas">${kelasList.map(function (k) { return `<option value="${UI.escapeHtml(k)}" ${p.KELAS_PEMINATAN === k ? "selected" : ""}>${UI.escapeHtml(k)}</option>`; }).join("")}</select>
-                <div id="blokAlasanPindah" style="display:none;">
-                    <label>Alasan Pindah Kelas</label>
-                    <input type="text" id="fAlasanPindah">
-                </div>
-
-                ${isAdmin() ? `
-                <label>Gelombang <span class="opsional">(khusus Admin)</span></label>
-                <input type="text" id="fEditGelombang" value="${UI.escapeHtml(p.GELOMBANG || "")}">
-                ` : `<label>Gelombang</label><input type="text" value="${UI.escapeHtml(p.GELOMBANG || "")}" disabled>`}
-
-                <label>No. HP</label>
-                <input type="text" id="fEditNoHp" value="${UI.escapeHtml(p.NO_HP || "")}">
-                <label>Alamat</label>
-                <textarea id="fEditAlamat" rows="2">${UI.escapeHtml(p.ALAMAT || "")}</textarea>
-
-                <div class="pesan-error-umum" id="errorEditDiri"></div>
-                <button type="button" class="utama blok" id="btnSimpanDiri" style="margin-top:12px;">Simpan Perubahan</button>
+                <div class="bagian-judul">F. Nilai &amp; Prestasi</div>
+                ${blokNilai("Nilai Rapor", "NILAI_MAPEL_RAPOR", cfgPublik.MAPEL_RAPOR_LIST, p)}
+                ${blokNilai("Nilai TKA", "NILAI_MAPEL_TKA", cfgPublik.MAPEL_TKA_LIST, p)}
+                <div class="field"><label style="margin-top:10px; font-size:0.72rem;">Prestasi</label><textarea rows="2" data-k="PRESTASI">${UI.escapeHtml(p.PRESTASI || "")}</textarea></div>
             </div>
-
             <div class="kartu">
-                <h3>Reset PIN Pendaftar</h3>
-                <p class="teks-lembut" style="margin-top:-4px;">Gunakan kalau pendaftar lupa PIN.</p>
+                <div class="bagian-judul">G. Informasi Sistem</div>
+                <div class="baris-info"><span>No. Pendaftaran</span><span>${UI.escapeHtml(p.NO_PENDAFTARAN)}</span></div>
+                <div class="baris-info"><span>Status</span><span>${badgeStatus(p.STATUS_PENDAFTARAN)}</span></div>
+                <div class="baris-info"><span>Dibuat</span><span>${UI.formatTanggal(p.CREATED_AT)}</span></div>
+                <div class="baris-info"><span>Diperbarui</span><span>${UI.formatTanggal(p.UPDATED_AT)}</span></div>
+            </div>
+            <div class="pesan-error-umum" id="errorEditDiri"></div>
+            <button type="button" class="utama blok" id="btnSimpanDiri">Simpan Perubahan</button>
+
+            <div class="kartu" style="margin-top:14px;">
+                <div class="bagian-judul">Reset PIN Pendaftar</div>
                 <div style="display:flex; gap:8px;">
                     <input type="text" id="fPinBaru" maxlength="6" inputmode="numeric" placeholder="PIN baru 6 digit">
                     <button type="button" id="btnResetPin" style="white-space:nowrap;">Reset</button>
@@ -337,28 +526,58 @@
             </div>
         `;
 
-        const selKelas = document.getElementById("fEditKelas");
-        const blokAlasan = document.getElementById("blokAlasanPindah");
-        selKelas.addEventListener("change", function () { blokAlasan.style.display = selKelas.value !== p.KELAS_PEMINATAN ? "block" : "none"; });
+        const selKelas = wadah.querySelector('[data-k="KELAS_PEMINATAN"]');
+        selKelas.addEventListener("change", function () { document.getElementById("blokAlasanPindah").style.display = selKelas.value !== (p.KELAS_PEMINATAN || "") ? "block" : "none"; });
+
+        // total & rata-rata otomatis per kolom nilai (2 desimal)
+        function hitungNilai(kolom) {
+            const box = wadah.querySelector('[data-ringkas="' + kolom + '"]');
+            const vals = [];
+            wadah.querySelectorAll('[data-nilai="' + kolom + '"]').forEach(function (el) {
+                const v = parseFloat(el.value.replace(",", "."));
+                if (!isNaN(v)) vals.push(v);
+            });
+            if (!vals.length) { box.style.display = "none"; return; }
+            const tot = vals.reduce(function (a, b) { return a + b; }, 0);
+            box.style.display = "flex";
+            box.innerHTML = `<span>Total: <strong>${tot.toFixed(2)}</strong></span><span>Rata-rata: <strong>${(tot / vals.length).toFixed(2)}</strong></span><span>${vals.length} nilai</span>`;
+        }
+        ["NILAI_MAPEL_RAPOR", "NILAI_MAPEL_TKA"].forEach(function (kol) {
+            hitungNilai(kol);
+            wadah.querySelectorAll('[data-nilai="' + kol + '"]').forEach(function (el) { el.addEventListener("input", function () { hitungNilai(kol); }); });
+        });
 
         document.getElementById("btnSimpanDiri").addEventListener("click", async function () {
             const errorBox = document.getElementById("errorEditDiri");
             errorBox.classList.remove("tampil");
             const payload = { noPendaftaran: p.NO_PENDAFTARAN };
-            if (selKelas.value !== p.KELAS_PEMINATAN) {
-                payload.KELAS_PEMINATAN = selKelas.value;
+            wadah.querySelectorAll("[data-k]").forEach(function (el) {
+                if (el.disabled) return;
+                const k = el.getAttribute("data-k");
+                if (String(el.value).trim() !== String(p[k] == null ? "" : p[k]).trim()) payload[k] = el.value.trim();
+            });
+            ["NILAI_MAPEL_RAPOR", "NILAI_MAPEL_TKA"].forEach(function (kol) {
+                const pasangan = [];
+                let salah = false;
+                wadah.querySelectorAll('[data-nilai="' + kol + '"]').forEach(function (el) {
+                    const v = el.value.trim().replace(",", ".");
+                    if (!v) return;
+                    if (isNaN(parseFloat(v)) || parseFloat(v) < 0 || parseFloat(v) > 100) salah = true;
+                    pasangan.push(el.getAttribute("data-mapel") + ":" + v);
+                });
+                if (salah) { errorBox.textContent = "Nilai harus angka 0-100 (pakai titik untuk desimal)."; errorBox.classList.add("tampil"); payload.__salah = true; return; }
+                const baru = pasangan.join(",");
+                if (baru !== String(p[kol] || "")) payload[kol] = baru;
+            });
+            if (payload.__salah) return;
+            if (payload.KELAS_PEMINATAN !== undefined) {
                 payload.alasanPindahKelas = document.getElementById("fAlasanPindah").value.trim();
                 if (!payload.alasanPindahKelas) { errorBox.textContent = "Alasan pindah kelas wajib diisi."; errorBox.classList.add("tampil"); return; }
             }
-            if (isAdmin()) {
-                const gelBaru = document.getElementById("fEditGelombang").value.trim();
-                if (gelBaru !== p.GELOMBANG) payload.GELOMBANG = gelBaru;
-            }
-            payload.NO_HP = document.getElementById("fEditNoHp").value.trim();
-            payload.ALAMAT = document.getElementById("fEditAlamat").value.trim();
+            if (Object.keys(payload).length === 1) { UI.toast("Tidak ada perubahan untuk disimpan."); return; }
 
             const btn = document.getElementById("btnSimpanDiri");
-            btn.disabled = true; btn.textContent = "Menyimpan…";
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
             try {
                 const res = await API.updateProfile(payload);
                 if (!res.ok) throw new Error(res.pesan);
@@ -374,38 +593,64 @@
         document.getElementById("btnResetPin").addEventListener("click", async function () {
             const pinBaru = document.getElementById("fPinBaru").value.trim();
             if (!/^\d{6}$/.test(pinBaru)) { UI.toast("PIN baru harus 6 digit angka.", "error"); return; }
+            const btn = document.getElementById("btnResetPin");
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Reset…";
             try {
                 const res = await API.adminResetPIN(p.NO_PENDAFTARAN, pinBaru);
                 if (!res.ok) throw new Error(res.pesan);
                 UI.toast("PIN berhasil direset. Sampaikan PIN baru ke pendaftar secara aman.");
             } catch (err) { UI.toast(err.message || "Gagal reset PIN.", "error"); }
+            btn.disabled = false; btn.textContent = "Reset";
+        });
+    }
+
+    /** Pasang aksi "buka file via server" pada semua tombol [data-buka] di dalam wadah. */
+    function pasangTombolBuka(wadah, setelahBerhasil) {
+        wadah.querySelectorAll("[data-buka]").forEach(function (tombol) {
+            tombol.addEventListener("click", async function () {
+                const teksAsal = tombol.innerHTML;
+                tombol.disabled = true; tombol.innerHTML = UI.ikon("spinner") + " Membuka…";
+                const ok = await UI.bukaFile(tombol.getAttribute("data-buka"), tombol.getAttribute("data-id"));
+                tombol.disabled = false; tombol.innerHTML = teksAsal;
+                if (ok && setelahBerhasil) setelahBerhasil(tombol);
+            });
         });
     }
 
     function renderSubDokumen(detail, wadah) {
+        const p = detail.pendaftar;
         const jenisWajib = UI.csvKeArray(cfgPublik.JENIS_DOKUMEN_LIST);
-        wadah.innerHTML = jenisWajib.map(function (jenis) {
-            const row = detail.dokumen.find(function (d) { return d.JENIS_DOKUMEN === jenis; });
-            if (!row || !row.FILE_URL) {
-                return `<div class="baris-dokumen"><div class="nama">${UI.escapeHtml(jenis)}</div><span class="badge abu">Belum Upload</span></div>`;
-            }
-            return `
+        const jenisOpsional = UI.csvKeArray(cfgPublik.JENIS_DOKUMEN_OPSIONAL || "BUKTI_PRESTASI");
+        const daftarJenis = jenisWajib.map(function (j) { return [j, false]; })
+            .concat(jenisOpsional.filter(function (j) {
+                return (p.PRESTASI && String(p.PRESTASI).trim()) || detail.dokumen.some(function (d) { return d.JENIS_DOKUMEN === j; });
+            }).map(function (j) { return [j, true]; }));
+
+        wadah.innerHTML = `<div class="catatan hijau">${UI.ikon("info")}<span>Dokumen bertanda <em>opsional</em> tidak memengaruhi status pendaftar. Status Diterima ditentukan oleh pembayaran.</span></div>` +
+            daftarJenis.map(function (item) {
+                const jenis = item[0], opsional = item[1];
+                const row = detail.dokumen.find(function (d) { return d.JENIS_DOKUMEN === jenis; });
+                const judul = `${UI.escapeHtml(jenis)}${opsional ? ' <span class="opsional">(opsional)</span>' : ""}`;
+                if (!row || !row.FILE_URL) {
+                    return `<div class="baris-dokumen"><div class="nama">${judul}</div><span class="badge abu">Belum Upload</span></div>`;
+                }
+                return `
                 <div class="kartu">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span class="nama" style="font-weight:800; font-size:0.8rem;">${UI.escapeHtml(jenis)}</span>
+                        <span class="nama" style="font-weight:800; font-size:0.8rem;">${judul}</span>
                         <span class="badge ${row.STATUS === "Valid" ? "hijau" : (row.STATUS === "Perlu Perbaikan" ? "amber" : "biru")}">${UI.escapeHtml(row.STATUS)}</span>
                     </div>
-                    <a href="${row.FILE_URL}" target="_blank" rel="noreferrer" class="tombol teks" style="padding-left:0;">Lihat berkas ${UI.ikon("panah")}</a>
+                    <button type="button" class="tombol teks" data-buka="dokumen" data-id="${UI.escapeHtml(row.DOKUMEN_ID)}" style="padding-left:0;">Lihat berkas ${UI.ikon("panah")}</button>
                     ${row.CATATAN_PETUGAS ? `<div class="catatan-petugas">"${UI.escapeHtml(row.CATATAN_PETUGAS)}"</div>` : ""}
                     ${row.STATUS !== "Valid" ? `
                         <div style="display:flex; gap:8px; margin-top:10px;">
                             <button type="button" class="utama" data-verif="${row.DOKUMEN_ID}" data-status="Valid" style="flex:1;">Tandai Valid</button>
                             <button type="button" data-verif="${row.DOKUMEN_ID}" data-status="Perlu Perbaikan" style="flex:1;">Perlu Perbaikan</button>
-                        </div>
-                    ` : ""}
-                </div>
-            `;
-        }).join("");
+                        </div>` : ""}
+                </div>`;
+            }).join("");
+
+        pasangTombolBuka(wadah);
 
         wadah.querySelectorAll("[data-verif]").forEach(function (btn) {
             btn.addEventListener("click", async function () {
@@ -413,52 +658,149 @@
                 const statusBaru = btn.getAttribute("data-status");
                 let catatan = "";
                 if (statusBaru === "Perlu Perbaikan") {
-                    catatan = prompt("Catatan untuk pendaftar (wajib diisi):") || "";
-                    if (!catatan.trim()) { UI.toast("Catatan wajib diisi untuk status Perlu Perbaikan.", "error"); return; }
+                    const m = await modal({ judul: "Perlu Perbaikan", isiHtml: "Tulis catatan untuk pendaftar (apa yang harus diperbaiki).", input: "area", wajibIsi: true, pesanWajib: "Catatan wajib diisi.", tombolOk: "Kirim" });
+                    if (!m.ok) return;
+                    catatan = m.nilai.trim();
                 }
+                btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Memproses…";
                 try {
                     const res = await API.adminVerifikasiDokumen(dokumenId, statusBaru, catatan);
                     if (!res.ok) throw new Error(res.pesan);
                     UI.toast("Status dokumen diperbarui.");
                     renderDetail();
-                } catch (err) { UI.toast(err.message || "Gagal memperbarui status.", "error"); }
+                } catch (err) { UI.toast(err.message || "Gagal memperbarui status.", "error"); btn.disabled = false; btn.textContent = statusBaru === "Valid" ? "Tandai Valid" : "Perlu Perbaikan"; }
             });
         });
     }
 
     function renderSubPembayaran(detail, wadah) {
+        const p = detail.pendaftar;
+        const rb = detail.ringkasanBayar || {};
+        const statusBayarHtml = rb.lunas ? '<span class="badge hijau">Lunas — Diterima</span>' : (rb.total > 0 ? '<span class="badge amber">Menunggu Daftar Ulang</span>' : '<span class="badge abu">Belum ada pembayaran</span>');
+
+        wadah.innerHTML = `
+            <div class="kartu">
+                <div class="bagian-judul">Ringkasan Biaya</div>
+                <div class="baris-info"><span>Biaya pendaftaran (${UI.escapeHtml(p.JENIS_KELAMIN || "-")})</span><span>${UI.formatRupiah(rb.biaya || 0)}</span></div>
+                <div class="baris-info"><span>Potongan${rb.keteranganPotongan ? " — " + UI.escapeHtml(rb.keteranganPotongan) : ""}</span><span>${rb.potongan ? "- " + UI.formatRupiah(rb.potongan) : "-"}</span></div>
+                <div class="baris-info"><span>Yang harus dibayar</span><span>${UI.formatRupiah(rb.ambang || 0)}</span></div>
+                <div class="baris-info"><span>Sudah dibayar (terkonfirmasi)</span><span>${UI.formatRupiah(rb.total || 0)}</span></div>
+                <div class="baris-info"><span>Sisa</span><span style="color:${rb.sisa ? "var(--merah)" : "var(--hijau-700)"};">${UI.formatRupiah(rb.sisa || 0)}</span></div>
+                <div style="margin-top:8px;">${statusBayarHtml}</div>
+            </div>
+
+            <div class="kartu">
+                <div class="bagian-judul">Potongan Biaya</div>
+                <p class="teks-lembut" style="margin:0 0 8px;">Isi nominal POSITIF (mis. 300000). Isi 0 untuk menghapus potongan. Untuk gratis penuh isi sebesar biaya pendaftaran.</p>
+                <div class="grid-2">
+                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Nominal Potongan</label><input type="text" inputmode="numeric" id="fPotongan" value="${rb.potongan || ""}"></div>
+                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Keterangan</label><input type="text" id="fKetPotongan" value="${UI.escapeHtml(rb.keteranganPotongan || "")}" placeholder="Beasiswa / Anak Guru / Anak Panti / Gel. 1"></div>
+                </div>
+                <div class="pesan-error-umum" id="errorPotongan"></div>
+                <button type="button" class="blok" id="btnSimpanPotongan" style="margin-top:8px;">Simpan Potongan</button>
+            </div>
+
+            <div class="kartu">
+                <div class="bagian-judul">Catat Pembayaran Langsung</div>
+                <div class="grid-2">
+                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Jenis</label><select id="fJenisBayar"><option>DP</option><option>Daftar Ulang</option></select></div>
+                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Metode</label><select id="fMetodeBayar"><option>Tunai</option><option>Transfer</option></select></div>
+                </div>
+                <div class="field"><label style="margin-top:6px; font-size:0.72rem;">Nominal</label><input type="text" inputmode="numeric" id="fNominalBayar" placeholder="mis. 100000"></div>
+                <div class="pesan-error-umum" id="errorCatatBayar"></div>
+                <button type="button" class="utama blok" id="btnCatatBayar" style="margin-top:8px;">Catat &amp; Konfirmasi</button>
+            </div>
+
+            <div class="bagian-judul" style="margin-top:14px;">Riwayat Pembayaran</div>
+            <div id="daftarBayar"></div>
+        `;
+
+        document.getElementById("btnSimpanPotongan").addEventListener("click", async function (e) {
+            const btn = e.currentTarget, eb = document.getElementById("errorPotongan");
+            eb.classList.remove("tampil");
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
+            try {
+                const res = await API.adminSetPotongan(p.NO_PENDAFTARAN, document.getElementById("fPotongan").value, document.getElementById("fKetPotongan").value);
+                if (!res.ok) throw new Error(res.pesan);
+                UI.toast("Potongan disimpan.");
+                renderDetail();
+            } catch (err) { eb.textContent = err.message || "Gagal."; eb.classList.add("tampil"); btn.disabled = false; btn.textContent = "Simpan Potongan"; }
+        });
+
+        document.getElementById("btnCatatBayar").addEventListener("click", async function (e) {
+            const btn = e.currentTarget, eb = document.getElementById("errorCatatBayar");
+            eb.classList.remove("tampil");
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Mencatat…";
+            try {
+                const res = await API.adminInputPembayaran(p.NO_PENDAFTARAN, document.getElementById("fJenisBayar").value, document.getElementById("fMetodeBayar").value, document.getElementById("fNominalBayar").value);
+                if (!res.ok) throw new Error(res.pesan);
+                UI.toast("Pembayaran tercatat & terkonfirmasi.");
+                renderDetail();
+            } catch (err) { eb.textContent = err.message || "Gagal."; eb.classList.add("tampil"); btn.disabled = false; btn.textContent = "Catat & Konfirmasi"; }
+        });
+
+        const daftar = document.getElementById("daftarBayar");
         if (detail.pembayaran.length === 0) {
-            wadah.innerHTML = '<div class="kartu teks-lembut" style="text-align:center;">Belum ada pembayaran tercatat.</div>';
+            daftar.innerHTML = '<div class="kartu teks-lembut" style="text-align:center;">Belum ada pembayaran tercatat.</div>';
             return;
         }
-        wadah.innerHTML = detail.pembayaran.map(function (p) {
+        daftar.innerHTML = detail.pembayaran.map(function (b) {
+            const menunggu = b.STATUS_KONFIRMASI === "Menunggu";
+            const perluBukti = String(b.METODE) !== "Tunai";
+            const adaBukti = !!b.BUKTI_URL;
             return `
-                <div class="kartu">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-weight:800; font-size:0.8rem;">${UI.escapeHtml(p.JENIS)} · ${UI.escapeHtml(p.METODE)}</span>
-                        <span style="font-weight:800; color:var(--hijau-700);">${UI.formatRupiah(p.NOMINAL)}</span>
-                    </div>
-                    <div class="teks-kecil">${UI.formatTanggal(p.TANGGAL)}</div>
-                    ${p.BUKTI_URL ? `<a href="${p.BUKTI_URL}" target="_blank" rel="noreferrer" class="tombol teks" style="padding-left:0;">Lihat bukti ${UI.ikon("panah")}</a>` : ""}
-                    <span class="badge ${p.STATUS_KONFIRMASI === "Dikonfirmasi" ? "hijau" : "amber"}" style="display:inline-block; margin-top:4px;">${UI.escapeHtml(p.STATUS_KONFIRMASI)}</span>
-                    ${p.STATUS_KONFIRMASI !== "Dikonfirmasi" ? `
-                        <div style="display:flex; gap:8px; margin-top:10px;">
-                            <button type="button" class="utama" data-bayar="${p.PAYMENT_ID}" data-status="Dikonfirmasi" style="flex:1;">Konfirmasi</button>
-                            <button type="button" data-bayar="${p.PAYMENT_ID}" data-status="Ditolak" style="flex:1;">Tolak</button>
-                        </div>
-                    ` : ""}
+            <div class="kartu" data-bayar-kartu="${b.PAYMENT_ID}" data-perlu-bukti="${perluBukti && adaBukti ? "1" : "0"}">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-weight:800; font-size:0.8rem;">${UI.escapeHtml(b.JENIS)} · ${UI.escapeHtml(b.METODE)}</span>
+                    <span style="font-weight:800; color:var(--hijau-700);">${UI.formatRupiah(b.NOMINAL)}</span>
                 </div>
-            `;
+                <div class="teks-kecil">${UI.formatTanggal(b.TANGGAL)}</div>
+                ${adaBukti ? `<button type="button" class="tombol teks" data-buka="bukti" data-id="${UI.escapeHtml(b.PAYMENT_ID)}" data-lihat-bukti style="padding-left:0;">Lihat bukti ${UI.ikon("panah")}</button>` : (perluBukti ? '<div class="catatan amber" style="margin:6px 0;">' + UI.ikon("info") + '<span>Transfer ini belum ada bukti — belum bisa dikonfirmasi.</span></div>' : '<div class="teks-kecil">Tanpa bukti (tunai).</div>')}
+                <span class="badge ${b.STATUS_KONFIRMASI === "Dikonfirmasi" ? "hijau" : (b.STATUS_KONFIRMASI === "Ditolak" ? "merah" : "amber")}" style="display:inline-block; margin-top:4px;">${UI.escapeHtml(b.STATUS_KONFIRMASI)}</span>
+                ${menunggu ? `
+                    <div class="field"><label style="margin-top:8px; font-size:0.72rem;">Nominal (koreksi jika salah ketik)</label><input type="text" inputmode="numeric" data-nominal value="${UI.escapeHtml(String(b.NOMINAL || "").replace(/\D/g, ""))}"></div>
+                    ${perluBukti && adaBukti ? '<div class="teks-kecil" data-hint-bukti style="margin-top:6px;">Buka bukti dulu sebelum mengonfirmasi.</div>' : ""}
+                    <div style="display:flex; gap:8px; margin-top:8px;">
+                        <button type="button" class="utama" data-konfirmasi="${b.PAYMENT_ID}" style="flex:1;" ${(perluBukti && !adaBukti) || (perluBukti && adaBukti) ? "disabled" : ""}>Konfirmasi</button>
+                        <button type="button" data-tolak="${b.PAYMENT_ID}" style="flex:1;">Tolak</button>
+                    </div>` : ""}
+            </div>`;
         }).join("");
 
-        wadah.querySelectorAll("[data-bayar]").forEach(function (btn) {
+        // Tombol Konfirmasi baru aktif setelah bukti BENAR-BENAR berhasil dibuka
+        pasangTombolBuka(daftar, function (tombol) {
+            if (!tombol.hasAttribute("data-lihat-bukti")) return;
+            const kartu = tombol.closest("[data-bayar-kartu]");
+            const btn = kartu.querySelector("[data-konfirmasi]");
+            if (btn) btn.disabled = false;
+            const hint = kartu.querySelector("[data-hint-bukti]");
+            if (hint) hint.textContent = "Bukti sudah dibuka — silakan konfirmasi jika sesuai.";
+        });
+
+        daftar.querySelectorAll("[data-konfirmasi]").forEach(function (btn) {
             btn.addEventListener("click", async function () {
+                const kartu = btn.closest("[data-bayar-kartu]");
+                const nominal = kartu.querySelector("[data-nominal]").value;
+                btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Memproses…";
                 try {
-                    const res = await API.adminKonfirmasiPembayaran(btn.getAttribute("data-bayar"), btn.getAttribute("data-status"));
+                    const res = await API.adminKonfirmasiPembayaran(btn.getAttribute("data-konfirmasi"), "Dikonfirmasi", "", nominal);
                     if (!res.ok) throw new Error(res.pesan);
-                    UI.toast("Status pembayaran diperbarui.");
+                    UI.toast("Pembayaran dikonfirmasi.");
                     renderDetail();
-                } catch (err) { UI.toast(err.message || "Gagal memperbarui.", "error"); }
+                } catch (err) { UI.toast(err.message || "Gagal.", "error"); btn.disabled = false; btn.textContent = "Konfirmasi"; }
+            });
+        });
+        daftar.querySelectorAll("[data-tolak]").forEach(function (btn) {
+            btn.addEventListener("click", async function () {
+                const m = await modal({ judul: "Tolak Pembayaran", isiHtml: "Tulis alasan penolakan.", input: "area", wajibIsi: true, pesanWajib: "Alasan wajib diisi.", tombolOk: "Tolak" });
+                if (!m.ok) return;
+                btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Memproses…";
+                try {
+                    const res = await API.adminKonfirmasiPembayaran(btn.getAttribute("data-tolak"), "Ditolak", m.nilai.trim());
+                    if (!res.ok) throw new Error(res.pesan);
+                    UI.toast("Pembayaran ditolak.");
+                    renderDetail();
+                } catch (err) { UI.toast(err.message || "Gagal.", "error"); btn.disabled = false; btn.textContent = "Tolak"; }
             });
         });
     }
@@ -539,7 +881,7 @@
             errorBox.classList.remove("tampil");
             if (!j) { errorBox.textContent = "Judul wajib diisi."; errorBox.classList.add("tampil"); return; }
             const btn = document.getElementById("btnSimpanPengumuman");
-            btn.disabled = true; btn.textContent = "Menyimpan…";
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
             try {
                 const res = await API.adminSimpanPengumuman(id, j, i, "Ya");
                 if (!res.ok) throw new Error(res.pesan);
@@ -561,7 +903,8 @@
         const isiTab = document.getElementById("isiTab");
         const keyUmum = [
             "STATUS_PENDAFTARAN_DIBUKA", "TAHUN_AJARAN", "TAHUN_AJARAN_PENDEK",
-            "BIAYA_PENDAFTARAN", "BIAYA_DP_MIN", "KELAS_PEMINATAN_LIST",
+            "BIAYA_PENDAFTARAN_L", "BIAYA_PENDAFTARAN_P", "BIAYA_DP_MIN", "KELAS_PEMINATAN_LIST",
+            "WA_TEMPLATE_HUBUNGI_PENDAFTAR", "JENIS_DOKUMEN_OPSIONAL", "REKENING_1", "REKENING_2",
             "ADMIN_WA_1_NAMA", "ADMIN_WA_1_NOMOR", "ADMIN_WA_2_NAMA", "ADMIN_WA_2_NOMOR",
             "FORM_TUTUP_JUDUL", "FORM_TUTUP_SUBJUDUL", "FORM_TUTUP_INFO_TAMBAHAN",
             "FITUR_SURVEI_AKTIF",
@@ -578,7 +921,35 @@
                 <div class="pesan-error-umum" id="errorConfig"></div>
                 <button type="button" class="utama blok" id="btnSimpanConfig" style="margin-top:10px;">Simpan Perubahan</button>
             </div>
+            <div class="kartu">
+                <div class="bagian-judul">Bersihkan Riwayat Aktivitas</div>
+                <p class="teks-lembut" style="margin:0 0 10px;">Hapus log lama agar Spreadsheet tidak membengkak. Log yang lebih baru tetap disimpan. Tindakan ini tidak bisa dibatalkan.</p>
+                <div style="display:grid; gap:8px;">
+                    <button type="button" data-hari="60">Hapus log lebih dari 60 hari</button>
+                    <button type="button" data-hari="90">Hapus log lebih dari 90 hari</button>
+                    <button type="button" data-hari="180">Hapus log lebih dari 180 hari</button>
+                </div>
+            </div>
         `;
+        document.querySelectorAll("[data-hari]").forEach(function (btn) {
+            btn.addEventListener("click", async function () {
+                const hari = btn.getAttribute("data-hari");
+                const m = await modal({
+                    judul: "Hapus Log " + hari + " Hari",
+                    isiHtml: "Semua riwayat aktivitas yang lebih lama dari <strong>" + hari + " hari</strong> akan dihapus permanen. Ketik <strong>HAPUS</strong> untuk melanjutkan.",
+                    input: "teks", placeholder: "Ketik HAPUS", wajibKata: "HAPUS", tombolOk: "Hapus Log",
+                });
+                if (!m.ok) return;
+                const teksAsal = btn.textContent;
+                btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menghapus…";
+                try {
+                    const res = await API.adminBersihkanLog(hari, "HAPUS");
+                    if (!res.ok) throw new Error(res.pesan);
+                    UI.toast(res.pesan);
+                } catch (err) { UI.toast(err.message || "Gagal menghapus log.", "error"); }
+                btn.disabled = false; btn.textContent = teksAsal;
+            });
+        });
         const selKey = document.getElementById("fPilihKey");
         function isiNilaiSekarang() { document.getElementById("fNilaiSekarang").value = cfgPublik[selKey.value] || "(kosong)"; }
         selKey.addEventListener("change", isiNilaiSekarang);
@@ -591,7 +962,7 @@
             errorBox.classList.remove("tampil");
             if (!value) { errorBox.textContent = "Nilai baru wajib diisi."; errorBox.classList.add("tampil"); return; }
             const btn = document.getElementById("btnSimpanConfig");
-            btn.disabled = true; btn.textContent = "Menyimpan…";
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
             try {
                 const res = await API.adminUpdateConfig(key, value);
                 if (!res.ok) throw new Error(res.pesan);

@@ -344,6 +344,12 @@ button.gelap { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255
 .pemuat { text-align: center; padding: 60px 20px; color: var(--tinta-lembut); font-size: 0.85rem; }
 .pemuat .spinner { width: 26px; height: 26px; border: 3px solid var(--garis); border-top-color: var(--hijau-600); border-radius: 50%; margin: 0 auto 12px; animation: putar 0.7s linear infinite; }
 @keyframes putar { to { transform: rotate(360deg); } }
+/* Ikon spinner inline (UI.ikon("spinner")) dipakai di SEMUA tombol proses —
+   tanpa aturan ini ikon tampil diam/statis meski tombol sedang loading. */
+.ikon-spin { display: inline-block; animation: putar 0.8s linear infinite; vertical-align: -2px; }
+.ringkasan-nilai { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; background: var(--krem-100, #f6f3ec); border-radius: 10px; font-size: 0.78rem; }
+.ringkasan-nilai strong { color: var(--hijau-700); }
+button:disabled, .tombol:disabled { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 
 .kotak-manual { margin-top: 8px; display: none; }
 .kotak-manual.tampil { display: block; }

@@ -34,7 +34,9 @@ const API = (() => {
     const KUNCI_ROLE = "SPMB_ROLE";
     const KUNCI_NO_PENDAFTARAN = "SPMB_NO_PENDAFTARAN";
     const KUNCI_NAMA = "SPMB_NAMA";
-    const SESI_DURASI_MS = 8 * 60 * 60 * 1000; // 8 jam — samakan dgn auth.gs
+    // Disamakan dgn SESSION_DURATION_SECONDS di auth.gs — CacheService Apps
+    // Script punya batas keras 6 jam (21600 detik), bukan 8 jam.
+    const SESI_DURASI_MS = 6 * 60 * 60 * 1000; // 6 jam — samakan dgn auth.gs
 
     // -------------------------------------------------------------------------
     // SESSION (client-side bookkeeping — sumber kebenaran TETAP di server)
@@ -196,6 +198,30 @@ const API = (() => {
         return response.json();
     }
 
+    /**
+     * Konversi File -> base64 murni (tanpa prefix "data:...;base64,").
+     * Upload file DIKIRIM LEWAT JSON (bukan multipart/FormData) karena
+     * e.parameter.file di Apps Script Web App terbukti TIDAK bisa
+     * diandalkan (kadang datang bukan Blob valid) — ini penyebab bug
+     * "File tidak valid" & BUKTI_URL kosong di Spreadsheet. Base64 lewat
+     * JSON konsisten dengan jalur _post yang sudah dipakai di seluruh
+     * app, dan Utilities.newBlob() di server merekonstruksi Blob asli.
+     * @param {File} file
+     * @returns {Promise<string>}
+     */
+    function _fileKeBase64(file) {
+        return new Promise(function (resolve, reject) {
+            const reader = new FileReader();
+            reader.onload = function () {
+                const hasil = String(reader.result || "");
+                const koma = hasil.indexOf(",");
+                resolve(koma === -1 ? hasil : hasil.slice(koma + 1));
+            };
+            reader.onerror = function () { reject(new Error("Gagal membaca file.")); };
+            reader.readAsDataURL(file);
+        });
+    }
+
     async function _postFormData(formData) {
         const token = _getToken();
         if (!token || sesiKedaluwarsaClient()) {
@@ -324,12 +350,14 @@ const API = (() => {
             return { ok: false, pesan: `Ukuran file melebihi batas ${APP_CONFIG.maxUploadMB} MB.` };
         }
 
-        const formData = new FormData();
-        formData.append("action", "uploadDokumen");
-        formData.append("jenisDokumen", jenisDokumen);
-        formData.append("file", file);
-
-        return _postFormData(formData);
+        const fileBase64 = await _fileKeBase64(file);
+        return _post({
+            action: "uploadDokumen",
+            jenisDokumen,
+            fileBase64,
+            fileName: file.name,
+            fileMimeType: file.type,
+        }, true);
     }
 
     // -------------------------------------------------------------------------
@@ -347,20 +375,23 @@ const API = (() => {
      * @param {File} [file] - opsional
      */
     async function uploadBuktiPembayaran(jenisPembayaran, metode, nominal, file) {
-        const formData = new FormData();
-        formData.append("action", "uploadBuktiPembayaran");
-        formData.append("jenisPembayaran", jenisPembayaran);
-        formData.append("metode", metode || "Transfer");
-        formData.append("nominal", nominal || "");
+        const body = {
+            action: "uploadBuktiPembayaran",
+            jenisPembayaran,
+            metode: metode || "Transfer",
+            nominal: nominal || "",
+        };
         if (file) {
             const maxBytes = (APP_CONFIG.maxUploadMB || 2) * 1024 * 1024;
             if (file.size > maxBytes) {
                 return { ok: false, pesan: `Ukuran file melebihi batas ${APP_CONFIG.maxUploadMB} MB.` };
             }
-            formData.append("file", file);
+            body.fileBase64 = await _fileKeBase64(file);
+            body.fileName = file.name;
+            body.fileMimeType = file.type;
         }
 
-        return _postFormData(formData);
+        return _post(body, true);
     }
 
     // -------------------------------------------------------------------------
@@ -383,8 +414,8 @@ const API = (() => {
         return _post({ action: "adminUpdateStatus", noPendaftaran, statusBaru, catatan }, true);
     }
 
-    async function adminKonfirmasiPembayaran(paymentId, statusBaru, catatan = "") {
-        return _post({ action: "adminKonfirmasiPembayaran", paymentId, statusBaru, catatan }, true);
+    async function adminKonfirmasiPembayaran(paymentId, statusBaru, catatan = "", nominal = "") {
+        return _post({ action: "adminKonfirmasiPembayaran", paymentId, statusBaru, catatan, nominal }, true);
     }
 
     async function adminUpdateConfig(key, value) {
@@ -393,6 +424,31 @@ const API = (() => {
 
     async function adminResetPIN(noPendaftaran, pinBaru) {
         return _post({ action: "adminResetPIN", noPendaftaran, pinBaru }, true);
+    }
+
+    /** Ambil isi file (dokumen/bukti) via server -> { base64, mime, nama }. jenis: 'dokumen' | 'bukti'. */
+    async function getFile(jenis, id) {
+        return _get({ action: "getFile", jenis, id }, true);
+    }
+
+    /** [PETUGAS/ADMIN] Catat pembayaran langsung (tunai/loket), otomatis Dikonfirmasi. */
+    async function adminInputPembayaran(noPendaftaran, jenisPembayaran, metode, nominal, catatan) {
+        return _post({ action: "adminInputPembayaran", noPendaftaran, jenisPembayaran, metode, nominal, catatan: catatan || "" }, true);
+    }
+
+    /** [PETUGAS/ADMIN] Set potongan daftar ulang (input positif, server simpan negatif). */
+    async function adminSetPotongan(noPendaftaran, potongan, keterangan) {
+        return _post({ action: "adminSetPotongan", noPendaftaran, potongan, keterangan: keterangan || "" }, true);
+    }
+
+    /** [PETUGAS/ADMIN] Statistik dashboard (cache server 5 menit; refresh=true paksa hitung ulang). */
+    async function adminStatistik(refresh) {
+        return _get(refresh ? { action: "adminStatistik", refresh: "1" } : { action: "adminStatistik" }, true);
+    }
+
+    /** [ADMIN] Hapus log lebih tua dari 60/90/180 hari. konfirmasi harus "HAPUS". */
+    async function adminBersihkanLog(hari, konfirmasi) {
+        return _post({ action: "adminBersihkanLog", hari, konfirmasi }, true);
     }
 
     async function loginSekolah(email, password, pin) {
@@ -469,6 +525,11 @@ const API = (() => {
         adminKonfirmasiPembayaran,
         adminUpdateConfig,
         adminResetPIN,
+        getFile,
+        adminInputPembayaran,
+        adminSetPotongan,
+        adminStatistik,
+        adminBersihkanLog,
         adminSimpanPengumuman,
     };
 

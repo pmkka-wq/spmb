@@ -79,9 +79,58 @@ const UI = (() => {
         } catch (e) { return String(nilai); }
     }
 
+    /**
+     * Bangun link wa.me. Nomor dinormalisasi ke format internasional:
+     * "08xxxx" -> "628xxxx" (wa.me TIDAK jalan kalau masih pakai 0 di
+     * depan) — penting terutama untuk nomor PENDAFTAR yang selalu
+     * tersimpan format lokal "08...", beda dgn nomor admin di CONFIG yang
+     * biasanya sudah diisi manual dalam format 62.
+     */
     function linkWA(nomor, nama, pesanTemplate) {
         const teks = encodeURIComponent(pesanTemplate || ("Halo " + (nama || "") + ", saya mau bertanya seputar SPMB."));
-        return "https://wa.me/" + String(nomor || "").replace(/\D/g, "") + "?text=" + teks;
+        let digit = String(nomor || "").replace(/\D/g, "");
+        if (digit.startsWith("0")) digit = "62" + digit.slice(1);
+        else if (!digit.startsWith("62")) digit = "62" + digit;
+        return "https://wa.me/" + digit + "?text=" + teks;
+    }
+
+    /**
+     * Ganti placeholder {nama} di template teks dengan nilai dari `data`.
+     * Dipakai untuk template pesan WA yang bisa diatur lewat CONFIG.
+     * @param {string} template
+     * @param {Object} data - { key: value }
+     */
+    function isiTemplate(template, data) {
+        let hasil = String(template || "");
+        Object.keys(data || {}).forEach(function (k) {
+            hasil = hasil.split("{" + k + "}").join(data[k] == null ? "" : String(data[k]));
+        });
+        return hasil;
+    }
+
+    /**
+     * Buka file dokumen/bukti di tab baru lewat server (API.getFile).
+     * Tab dibuka SINKRON dulu (di dalam klik) supaya tidak diblokir popup
+     * blocker, lalu diarahkan ke blob setelah file selesai diambil.
+     * @returns {Promise<boolean>} true jika berhasil dibuka
+     */
+    async function bukaFile(jenis, id) {
+        const tab = window.open("", "_blank");
+        if (tab) tab.document.write("<p style='font-family:sans-serif'>Memuat berkas…</p>");
+        try {
+            const res = await API.getFile(jenis, id);
+            if (!res.ok) throw new Error(res.pesan || "Gagal membuka berkas.");
+            const bin = atob(res.data.base64);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            const url = URL.createObjectURL(new Blob([bytes], { type: res.data.mime }));
+            if (tab) tab.location.href = url; else window.location.href = url;
+            return true;
+        } catch (err) {
+            if (tab) tab.close();
+            toast(err.message || "Gagal membuka berkas.", "error");
+            return false;
+        }
     }
 
     /**
@@ -113,5 +162,5 @@ const UI = (() => {
         });
     }
 
-    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA, pasangToggleSandi };
+    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA, isiTemplate, bukaFile, pasangToggleSandi };
 })();
