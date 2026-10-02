@@ -18,8 +18,6 @@
     .subtab-btn.aktif { color: var(--hijau-600); border-bottom-color: var(--hijau-600); }
     .kartu-ringkas { background: var(--panel); border: 1px solid var(--garis); border-radius: var(--radius-kecil); padding: 14px; text-align: center; cursor: pointer; }
     .kartu-ringkas .angka { font-size: 1.5rem; font-weight: 800; color: var(--hijau-700); }
-    .modal-latar { position: fixed; inset: 0; background: rgba(15,30,20,0.55); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 16px; }
-    .modal-kotak { background: #fff; border-radius: 16px; padding: 18px; width: 100%; max-width: 380px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); }
     .bagian-judul { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.06em; color: var(--hijau-700); text-transform: uppercase; margin: 0 0 8px; }
     .baris-info { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--garis-lembut); font-size: 0.8rem; }
     .baris-info span:first-child { color: var(--tinta-lembut); }
@@ -82,6 +80,7 @@
     function keluar() {
         const btn = document.getElementById("btnKeluar");
         if (btn) { btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Keluar…"; }
+        API.hapusSesiLokal();
         API.logout().catch(function () { /* diamkan, tidak blocking */ });
         window.location.href = "login.html?panel=sekolah";
     }
@@ -96,6 +95,7 @@
         const tabs = [
             ["beranda", "jam", "Beranda"],
             ["pendaftar", "info", "Data Pendaftar"],
+            ["pengajuan", "info", "Pengajuan"],
             ["pengumuman", "unggah", "Pengumuman"],
         ];
         if (isAdmin()) tabs.push(["pengaturan", "kunci", "Pengaturan"]);
@@ -129,7 +129,7 @@
             });
         });
 
-        const rute = { beranda: renderBeranda, pendaftar: renderPendaftar, pengumuman: renderPengumuman, pengaturan: renderPengaturan, detail: renderDetail };
+        const rute = { beranda: renderBeranda, pendaftar: renderPendaftar, pengajuan: renderPengajuan, pengumuman: renderPengumuman, pengaturan: renderPengaturan, detail: renderDetail };
         (rute[viewAktif] || renderBeranda)();
     }
 
@@ -247,12 +247,20 @@
                     <div class="kartu-ringkas" data-status="Perlu Perbaikan"><div class="angka">${fmtAngka(perbaikan)}</div><div class="label">Perlu Perbaikan</div></div>
                 </div>
                 <div class="teks-kecil" style="margin-top:8px;">${fmtAngka(d.pembayaranMenunggu)} pembayaran menunggu konfirmasi · ${fmtAngka(d.dokumenMenunggu)} dokumen menunggu verifikasi</div>
+                ${d.pengajuanMenunggu ? `<div class="catatan amber" style="margin-top:8px; cursor:pointer;" id="kartuPengajuan">${UI.ikon("info")}<span><strong>${fmtAngka(d.pengajuanMenunggu)} pengajuan perubahan data</strong> menunggu ditindaklanjuti — klik untuk buka.</span></div>` : ""}
 
                 <h3 style="margin:16px 0 8px;">Pendaftar per Kelas Peminatan</h3>
                 <div class="kartu">
                     ${kelasKunci.length ? `<table class="tabel-data"><thead><tr><th>Kelas</th><th>Pendaftar</th><th>Boarding</th><th>Diterima</th></tr></thead><tbody>
                         ${kelasKunci.map(function (k) { const x = d.perKelas[k]; return `<tr style="cursor:default;"><td>${UI.escapeHtml(k)}</td><td><strong>${x.jumlah}</strong></td><td>${x.boarding}</td><td>${x.lunas}</td></tr>`; }).join("")}
                     </tbody></table>` : '<div class="teks-lembut">Belum ada pendaftar.</div>'}
+                </div>
+
+                <h3 style="margin:16px 0 8px;">Asal SD/MI Terbanyak</h3>
+                <div class="kartu">
+                    ${(d.topAsalSekolah && d.topAsalSekolah.length) ? `<table class="tabel-data"><thead><tr><th>Asal Sekolah</th><th>Jumlah Pendaftar</th></tr></thead><tbody>
+                        ${d.topAsalSekolah.map(function (x) { return `<tr style="cursor:default;"><td>${UI.escapeHtml(x.nama)}</td><td><strong>${x.jumlah}</strong></td></tr>`; }).join("")}
+                    </tbody></table>` : '<div class="teks-lembut">Belum ada data.</div>'}
                 </div>
 
                 <h3 style="margin:16px 0 8px;">Per Gelombang &amp; Jenis Kelamin</h3>
@@ -275,6 +283,8 @@
                 e.currentTarget.disabled = true; e.currentTarget.innerHTML = UI.ikon("spinner") + " Memuat…";
                 renderBeranda(true);
             });
+            const kartuPengajuan = document.getElementById("kartuPengajuan");
+            if (kartuPengajuan) kartuPengajuan.addEventListener("click", function () { viewAktif = "pengajuan"; render(); });
             document.querySelectorAll(".kartu-ringkas").forEach(function (el) {
                 el.addEventListener("click", function () {
                     filterPendaftar = { status: el.getAttribute("data-status"), gelombang: "", cari: "", page: 1 };
@@ -290,6 +300,64 @@
     // -----------------------------------------------------------------
     // DATA PENDAFTAR (Bagian 11, list + filter + pagination)
     // -----------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // DATA PENDAFTAR — cache 1 JAM di sessionStorage (semua baris ringkas,
+    // tanpa filter status/cari di server). Cache diperiksa basi-atau-tidak
+    // lewat adminLogTerakhir (1 angka, murah) — kalau ada aktivitas baru
+    // sejak cache diambil, otomatis ambil ulang. Status & pencarian
+    // SEPENUHNYA di-filter di memori browser -> instan, nol round-trip
+    // server tiap ganti filter/ketik. Tombol "Perbarui" selalu paksa ambil
+    // ulang dari server apa pun kondisinya.
+    // -----------------------------------------------------------------
+    const CACHE_PENDAFTAR_KEY = "SPMB_CACHE_PENDAFTAR_LIST";
+    const CACHE_PENDAFTAR_TTL_MS = 60 * 60 * 1000; // 1 jam
+    let semuaPendaftarMemori = null; // array lengkap hasil terakhir di memori
+
+    async function ambilSemuaPendaftar(paksaRefresh) {
+        if (!paksaRefresh) {
+            try {
+                const cache = JSON.parse(sessionStorage.getItem(CACHE_PENDAFTAR_KEY) || "null");
+                if (cache && (Date.now() - cache.waktuAmbil) < CACHE_PENDAFTAR_TTL_MS) {
+                    const resLog = await API.adminLogTerakhir();
+                    if (resLog.ok && resLog.data.timestamp <= cache.waktuLog) {
+                        return cache.data; // cache masih valid, tidak ada aktivitas baru
+                    }
+                }
+            } catch (err) { /* cache korup/parse gagal -> lanjut ambil dari server */ }
+        }
+        const [resList, resLog] = await Promise.all([API.adminGetPendaftar({ semua: "1" }), API.adminLogTerakhir()]);
+        if (!resList.ok) throw new Error(resList.pesan);
+        const data = resList.data.pendaftar;
+        try {
+            sessionStorage.setItem(CACHE_PENDAFTAR_KEY, JSON.stringify({ data: data, waktuAmbil: Date.now(), waktuLog: resLog.ok ? resLog.data.timestamp : Date.now() }));
+        } catch (err) { /* sessionStorage penuh -> tetap jalan tanpa cache */ }
+        return data;
+    }
+
+    /** Ekspor CSV dari data yang SUDAH ADA di memori (sama hasil filter status+cari yang sedang tampil) — tanpa panggilan server tambahan. */
+    function eksporPendaftarCsv() {
+        if (!semuaPendaftarMemori) { UI.toast("Data belum siap, tunggu sebentar.", "error"); return; }
+        let rows = semuaPendaftarMemori;
+        if (filterPendaftar.status) rows = rows.filter(function (r) { return r.STATUS_PENDAFTARAN === filterPendaftar.status; });
+        if (filterPendaftar.cari) {
+            const q = filterPendaftar.cari;
+            rows = rows.filter(function (r) {
+                return String(r.NAMA_LENGKAP).toLowerCase().indexOf(q) !== -1 || String(r.NO_PENDAFTARAN).toLowerCase().indexOf(q) !== -1
+                    || String(r.NO_HP).indexOf(q) !== -1 || String(r.ASAL_SEKOLAH || "").toLowerCase().indexOf(q) !== -1;
+            });
+        }
+        if (!rows.length) { UI.toast("Tidak ada data untuk diekspor."); return; }
+        const kolom = ["NO_PENDAFTARAN", "NAMA_LENGKAP", "NISN", "JENIS_KELAMIN", "ASAL_SEKOLAH", "NO_HP", "KELAS_PEMINATAN", "BOARDING", "GELOMBANG", "STATUS_PENDAFTARAN"];
+        const esc = function (v) { const s = String(v == null ? "" : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+        const csv = [kolom.join(",")].concat(rows.map(function (r) { return kolom.map(function (k) { return esc(r[k]); }).join(","); })).join("\r\n");
+        const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" }); // \ufeff -> Excel baca UTF-8 dgn benar
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "pendaftar_spmb_" + new Date().toISOString().slice(0, 10) + ".csv";
+        a.click();
+        URL.revokeObjectURL(a.href);
+    }
+
     async function renderPendaftar() {
         const isiTab = document.getElementById("isiTab");
         const statusList = ["", "Menunggu Verifikasi", "Perlu Perbaikan", "Terverifikasi", "Daftar Ulang", "Selesai"];
@@ -304,88 +372,133 @@
                     </select>
                 </div>
                 <div class="field">
-                    <label style="margin-top:0;">Cari (nama/no.reg/HP)</label>
-                    <input type="text" id="fFilterCari" value="${UI.escapeHtml(filterPendaftar.cari)}">
+                    <label style="margin-top:0;">Cari (nama/no.reg/HP/asal sekolah)</label>
+                    <input type="text" id="fFilterCari" value="${UI.escapeHtml(filterPendaftar.cari)}" placeholder="Ketik untuk cari instan...">
                 </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px;">
+                <button type="button" id="btnEksporCsv" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("unggah")} Ekspor CSV</button>
+                <button type="button" id="btnRefreshPendaftar" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("jam")} Perbarui Data</button>
             </div>
             <div id="daftarPendaftarTabel"><div class="pemuat"><div class="spinner"></div>Memuat data…</div></div>
         `;
 
-        document.getElementById("fFilterStatus").addEventListener("change", function (e) { filterPendaftar.status = e.target.value; filterPendaftar.page = 1; muatTabelPendaftar(); });
-        let timerCari;
+        document.getElementById("fFilterStatus").addEventListener("change", function (e) { filterPendaftar.status = e.target.value; filterPendaftar.page = 1; gambarTabelDariMemori(); });
         document.getElementById("fFilterCari").addEventListener("input", function (e) {
-            clearTimeout(timerCari);
-            timerCari = setTimeout(function () { filterPendaftar.cari = e.target.value.trim(); filterPendaftar.page = 1; muatTabelPendaftar(); }, 400);
+            // Tidak ada debounce/timeout server — data sudah di memori, filter instan tiap huruf.
+            filterPendaftar.cari = e.target.value.trim().toLowerCase();
+            filterPendaftar.page = 1;
+            gambarTabelDariMemori();
+        });
+        document.getElementById("btnEksporCsv").addEventListener("click", eksporPendaftarCsv);
+        document.getElementById("btnRefreshPendaftar").addEventListener("click", function (e) {
+            const btn = e.currentTarget;
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Memuat…";
+            muatTabelPendaftar(true).finally(function () { btn.disabled = false; btn.innerHTML = UI.ikon("jam") + " Perbarui Data"; });
         });
 
-        muatTabelPendaftar();
+        muatTabelPendaftar(false);
     }
 
-    async function muatTabelPendaftar() {
+    async function muatTabelPendaftar(paksaRefresh) {
         const wadah = document.getElementById("daftarPendaftarTabel");
         wadah.innerHTML = '<div class="pemuat"><div class="spinner"></div>Memuat data…</div>';
         try {
-            const res = await API.adminGetPendaftar({
-                status: filterPendaftar.status, gelombang: filterPendaftar.gelombang,
-                cari: filterPendaftar.cari, page: filterPendaftar.page, pageSize: 20,
-            });
-            if (!res.ok) { wadah.innerHTML = '<div class="pesan-error-umum tampil">' + UI.escapeHtml(res.pesan) + '</div>'; return; }
-
-            const rows = res.data.pendaftar;
-            if (rows.length === 0) {
-                wadah.innerHTML = '<div class="kartu teks-lembut" style="text-align:center; margin-top:12px;">Tidak ada data.</div>';
-                return;
-            }
-
-            wadah.innerHTML = `
-                <div style="overflow-x:auto; margin-top:10px;">
-                    <table class="tabel-data">
-                        <thead><tr><th>Nama · NISN</th><th>No. Reg</th><th>Asal Sekolah</th><th>Kelas</th><th>Status</th></tr></thead>
-                        <tbody>
-                            ${rows.map(function (r) {
-                                return `<tr data-no="${UI.escapeHtml(r.NO_PENDAFTARAN)}">
-                                    <td><strong>${UI.escapeHtml(r.NAMA_LENGKAP)}</strong><div class="teks-kecil">${UI.escapeHtml(r.NISN || "-")}</div></td>
-                                    <td>${UI.escapeHtml(r.NO_PENDAFTARAN)}</td>
-                                    <td>${UI.escapeHtml(r.ASAL_SEKOLAH || "-")}</td>
-                                    <td>${UI.escapeHtml(r.KELAS_PEMINATAN || "-")}</td>
-                                    <td>${badgeStatus(r.STATUS_PENDAFTARAN)}</td>
-                                </tr>`;
-                            }).join("")}
-                        </tbody>
-                    </table>
-                </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
-                    <span class="teks-kecil">Halaman ${res.data.page} dari ${res.data.totalPages} (${res.data.total} total)</span>
-                    <div style="display:flex; gap:6px;">
-                        <button type="button" id="btnHalPrev" ${res.data.page <= 1 ? "disabled" : ""} style="padding:7px 10px;">${UI.ikon("panahKiri")}</button>
-                        <button type="button" id="btnHalNext" ${res.data.page >= res.data.totalPages ? "disabled" : ""} style="padding:7px 10px;">${UI.ikon("panah")}</button>
-                    </div>
-                </div>
-            `;
-            wadah.querySelectorAll("tr[data-no]").forEach(function (tr) {
-                tr.addEventListener("click", function () { bukaDetail(tr.getAttribute("data-no")); });
-            });
-            const btnPrev = document.getElementById("btnHalPrev");
-            const btnNext = document.getElementById("btnHalNext");
-            if (btnPrev) btnPrev.addEventListener("click", function () { filterPendaftar.page--; muatTabelPendaftar(); });
-            if (btnNext) btnNext.addEventListener("click", function () { filterPendaftar.page++; muatTabelPendaftar(); });
+            semuaPendaftarMemori = await ambilSemuaPendaftar(paksaRefresh);
+            gambarTabelDariMemori();
         } catch (err) {
             wadah.innerHTML = '<div class="pesan-error-umum tampil">Error jaringan: ' + UI.escapeHtml(err.message) + '</div>';
         }
     }
 
+    /** Filter + paginasi 20/halaman, murni di memori — dipanggil tiap ganti filter/cari/halaman, tanpa ke server. */
+    function gambarTabelDariMemori() {
+        const wadah = document.getElementById("daftarPendaftarTabel");
+        if (!semuaPendaftarMemori) return;
+        let rows = semuaPendaftarMemori;
+        if (filterPendaftar.status) rows = rows.filter(function (r) { return r.STATUS_PENDAFTARAN === filterPendaftar.status; });
+        if (filterPendaftar.cari) {
+            const q = filterPendaftar.cari;
+            rows = rows.filter(function (r) {
+                return String(r.NAMA_LENGKAP).toLowerCase().indexOf(q) !== -1
+                    || String(r.NO_PENDAFTARAN).toLowerCase().indexOf(q) !== -1
+                    || String(r.NO_HP).indexOf(q) !== -1
+                    || String(r.ASAL_SEKOLAH || "").toLowerCase().indexOf(q) !== -1;
+            });
+        }
+        const total = rows.length;
+        const pageSize = 20;
+        const totalPages = Math.max(Math.ceil(total / pageSize), 1);
+        if (filterPendaftar.page > totalPages) filterPendaftar.page = totalPages;
+        const mulai = (filterPendaftar.page - 1) * pageSize;
+        const rowsHalaman = rows.slice(mulai, mulai + pageSize);
+
+        if (rowsHalaman.length === 0) {
+            wadah.innerHTML = '<div class="kartu teks-lembut" style="text-align:center; margin-top:12px;">Tidak ada data.</div>';
+            return;
+        }
+
+        wadah.innerHTML = `
+            <div style="overflow-x:auto; margin-top:10px;">
+                <table class="tabel-data">
+                    <thead><tr><th>Nama · NISN</th><th>No. Reg</th><th>Asal Sekolah</th><th>Kelas</th><th>Status</th></tr></thead>
+                    <tbody>
+                        ${rowsHalaman.map(function (r) {
+                            return `<tr data-no="${UI.escapeHtml(r.NO_PENDAFTARAN)}">
+                                <td><strong>${UI.escapeHtml(r.NAMA_LENGKAP)}</strong><div class="teks-kecil">${UI.escapeHtml(r.NISN || "-")}</div></td>
+                                <td>${UI.escapeHtml(r.NO_PENDAFTARAN)}</td>
+                                <td>${UI.escapeHtml(r.ASAL_SEKOLAH || "-")}</td>
+                                <td>${UI.escapeHtml(r.KELAS_PEMINATAN || "-")}</td>
+                                <td>${badgeStatus(r.STATUS_PENDAFTARAN)}</td>
+                            </tr>`;
+                        }).join("")}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;">
+                <span class="teks-kecil">Halaman ${filterPendaftar.page} dari ${totalPages} (${total} data)</span>
+                <div style="display:flex; gap:6px;">
+                    <button type="button" id="btnHalPrev" ${filterPendaftar.page <= 1 ? "disabled" : ""} style="padding:7px 10px;">${UI.ikon("panahKiri")}</button>
+                    <button type="button" id="btnHalNext" ${filterPendaftar.page >= totalPages ? "disabled" : ""} style="padding:7px 10px;">${UI.ikon("panah")}</button>
+                </div>
+            </div>
+        `;
+        wadah.querySelectorAll("tr[data-no]").forEach(function (tr) {
+            tr.addEventListener("click", function () { bukaDetail(tr.getAttribute("data-no")); });
+        });
+        const btnPrev = document.getElementById("btnHalPrev");
+        const btnNext = document.getElementById("btnHalNext");
+        if (btnPrev) btnPrev.addEventListener("click", function () { filterPendaftar.page--; gambarTabelDariMemori(); });
+        if (btnNext) btnNext.addEventListener("click", function () { filterPendaftar.page++; gambarTabelDariMemori(); });
+    }
+
     // -----------------------------------------------------------------
     // DETAIL PENDAFTAR (Bagian 10.1, 10.2, 10.3) — sub-tab Diri/Dokumen/Pembayaran
     // -----------------------------------------------------------------
-    async function renderDetail() {
+    // Cache detail 5 menit per No. Pendaftaran. Dipanggil dengan
+    // paksaRefresh=true SETIAP KALI ada aksi yang mengubah data orang ini
+    // (edit, verifikasi dokumen, konfirmasi bayar, dst) supaya layar tidak
+    // pernah menampilkan data basi setelah petugas sendiri mengubahnya.
+    const CACHE_DETAIL_TTL_MS = 5 * 60 * 1000;
+    async function renderDetail(paksaRefresh) {
         const isiTab = document.getElementById("isiTab");
         isiTab.innerHTML = '<div class="pemuat"><div class="spinner"></div>Memuat detail pendaftar…</div>';
 
+        const kunciCache = "SPMB_CACHE_DETAIL_" + noPendaftaranDetail;
         let detail;
         try {
-            const res = await API.adminGetDetail(noPendaftaranDetail);
-            if (!res.ok) { isiTab.innerHTML = '<div class="pesan-error-umum tampil">' + UI.escapeHtml(res.pesan) + '</div>'; return; }
-            detail = res.data;
+            if (!paksaRefresh) {
+                try {
+                    const c = JSON.parse(sessionStorage.getItem(kunciCache) || "null");
+                    if (c && (Date.now() - c.waktuAmbil) < CACHE_DETAIL_TTL_MS) detail = c.data;
+                } catch (err) { /* abaikan, ambil dari server */ }
+            }
+            if (!detail) {
+                const res = await API.adminGetDetail(noPendaftaranDetail);
+                if (!res.ok) { isiTab.innerHTML = '<div class="pesan-error-umum tampil">' + UI.escapeHtml(res.pesan) + '</div>'; return; }
+                detail = res.data;
+                try { sessionStorage.setItem(kunciCache, JSON.stringify({ data: detail, waktuAmbil: Date.now() })); } catch (err) { /* penuh, abaikan */ }
+            }
         } catch (err) {
             isiTab.innerHTML = '<div class="pesan-error-umum tampil">Error jaringan: ' + UI.escapeHtml(err.message) + '</div>';
             return;
@@ -404,7 +517,10 @@
                     <div class="teks-lembut">${UI.escapeHtml(p.ASAL_SEKOLAH || "-")}</div>
                     <div style="margin-top:6px;">${badgeStatus(p.STATUS_PENDAFTARAN)}</div>
                 </div>
-                ${p.NO_HP ? `<a class="tombol tombol-wa" style="margin-top:6px;" target="_blank" rel="noreferrer" href="${UI.linkWA(p.NO_HP, "", pesanWA)}">${UI.ikon("wa")} Hubungi Pendaftar</a>` : ""}
+                <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    ${p.NO_HP ? `<a class="tombol tombol-wa" style="margin-top:6px;" target="_blank" rel="noreferrer" href="${UI.linkWA(p.NO_HP, "", pesanWA)}">${UI.ikon("wa")} Hubungi Pendaftar</a>` : ""}
+                    <button type="button" class="tombol" style="margin-top:6px;" id="btnCetakInfo">${UI.ikon("unggah")} Cetak / Unduh PDF</button>
+                </div>
             </div>
             <div class="subtab-bar" style="margin-top:14px;">
                 <button type="button" class="subtab-btn" data-sub="diri">Data Lengkap</button>
@@ -414,6 +530,7 @@
             <div id="isiSubDetail"></div>
         `;
         document.getElementById("btnKembaliList").addEventListener("click", function () { viewAktif = "pendaftar"; render(); });
+        document.getElementById("btnCetakInfo").addEventListener("click", function () { cetakInfoPendaftar(p); });
         document.querySelectorAll(".subtab-btn").forEach(function (btn) {
             btn.classList.toggle("aktif", btn.getAttribute("data-sub") === subTabDetail);
             btn.addEventListener("click", function () {
@@ -491,6 +608,100 @@
                 return `<div class="field"><label style="margin-top:4px; font-size:0.72rem;">${UI.escapeHtml(m)}</label><input type="text" inputmode="decimal" data-nilai="${kolom}" data-mapel="${UI.escapeHtml(m)}" value="${UI.escapeHtml(data[m] || "")}"></div>`;
             }).join("")}</div>
             <div class="ringkasan-nilai" data-ringkas="${kolom}" style="display:none;"></div>`;
+    }
+
+    // -----------------------------------------------------------------
+    // PENGAJUAN PERUBAHAN DATA (dari dashboard pendaftar)
+    // -----------------------------------------------------------------
+    async function renderPengajuan() {
+        const isiTab = document.getElementById("isiTab");
+        isiTab.innerHTML = '<div class="pemuat"><div class="spinner"></div>Memuat pengajuan…</div>';
+        let rows = [];
+        try {
+            const res = await API.adminGetPengajuan(false);
+            if (!res.ok) { isiTab.innerHTML = '<div class="pesan-error-umum tampil">' + UI.escapeHtml(res.pesan) + '</div>'; return; }
+            rows = res.data.pengajuan;
+        } catch (err) { isiTab.innerHTML = '<div class="pesan-error-umum tampil">Error jaringan.</div>'; return; }
+
+        isiTab.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <h3 style="margin:0;">Pengajuan Perubahan Data</h3>
+                <a href="#" id="lihatSemuaPengajuan" class="teks-kecil">Lihat yang sudah selesai</a>
+            </div>
+            <div class="catatan hijau">${UI.ikon("info")}<span>Data TIDAK berubah otomatis — cek permintaan, koreksi manual di tab Data Pendaftar ▸ Data Lengkap, baru tandai selesai di sini.</span></div>
+            <div id="daftarPengajuan"></div>
+        `;
+        document.getElementById("lihatSemuaPengajuan").addEventListener("click", async function (e) {
+            e.preventDefault();
+            const res = await API.adminGetPengajuan(true);
+            if (res.ok) gambarPengajuan(res.data.pengajuan);
+        });
+
+        function gambarPengajuan(list) {
+            const wadah = document.getElementById("daftarPengajuan");
+            if (!list.length) { wadah.innerHTML = '<div class="kartu teks-lembut" style="text-align:center;">Tidak ada pengajuan.</div>'; return; }
+            wadah.innerHTML = list.map(function (r) {
+                const cls = r.STATUS === "Selesai" ? "hijau" : (r.STATUS === "Ditolak" ? "merah" : "amber");
+                return `<div class="kartu">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                        <div>
+                            <div style="font-weight:800; font-size:0.8rem;">${UI.escapeHtml(r.NAMA_PENDAFTAR || "-")}</div>
+                            <div class="teks-kecil">${UI.escapeHtml(r.NO_PENDAFTARAN)} · ${UI.formatTanggal(r.TANGGAL)}</div>
+                        </div>
+                        <span class="badge ${cls}">${UI.escapeHtml(r.STATUS)}</span>
+                    </div>
+                    <div class="baris-info"><span>Bagian</span><span>${UI.escapeHtml(r.FIELD)}</span></div>
+                    <div class="baris-info"><span>Perubahan diminta</span><span>${UI.escapeHtml(r.PERUBAHAN)}</span></div>
+                    ${r.CATATAN ? `<div class="teks-kecil" style="margin-top:6px;">Catatan: ${UI.escapeHtml(r.CATATAN)}</div>` : ""}
+                    ${r.STATUS === "Menunggu" ? `
+                        <div style="display:flex; gap:8px; margin-top:10px;">
+                            <button type="button" class="utama" data-buka-pendaftar="${UI.escapeHtml(r.NO_PENDAFTARAN)}" style="flex:1;">Buka Data Pendaftar</button>
+                            <button type="button" data-selesai="${r.PENGAJUAN_ID}" style="flex:1;">Tandai Selesai</button>
+                        </div>` : ""}
+                </div>`;
+            }).join("");
+
+            wadah.querySelectorAll("[data-buka-pendaftar]").forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    noPendaftaranDetail = btn.getAttribute("data-buka-pendaftar");
+                    viewAktif = "detail"; subTabDetail = "diri"; render();
+                });
+            });
+            wadah.querySelectorAll("[data-selesai]").forEach(function (btn) {
+                btn.addEventListener("click", async function () {
+                    btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Memproses…";
+                    try {
+                        const res = await API.adminSelesaikanPengajuan(btn.getAttribute("data-selesai"), "Selesai");
+                        if (!res.ok) throw new Error(res.pesan);
+                        UI.toast("Pengajuan ditandai selesai.");
+                        renderPengajuan();
+                    } catch (err) { UI.toast(err.message || "Gagal.", "error"); btn.disabled = false; btn.textContent = "Tandai Selesai"; }
+                });
+            });
+        }
+        gambarPengajuan(rows);
+    }
+
+    /** "Cetak / Unduh PDF" info pendaftar lengkap — dipakai dari Detail Pendaftar. */
+    function cetakInfoPendaftar(p) {
+        function statNilai(str) {
+            const vals = String(str || "").split(",").map(function (pair) { return parseFloat((pair.split(":")[1] || "").trim().replace(",", ".")); }).filter(function (v) { return !isNaN(v); });
+            if (!vals.length) return "-";
+            const tot = vals.reduce(function (a, b) { return a + b; }, 0);
+            return vals.length + " nilai, total " + tot.toFixed(2) + ", rata-rata " + (tot / vals.length).toFixed(2);
+        }
+        const baris = [
+            ["Nama Lengkap", p.NAMA_LENGKAP], ["NISN", p.NISN], ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR],
+            ["Asal Sekolah", p.ASAL_SEKOLAH], ["No. Pendaftaran", p.NO_PENDAFTARAN], ["Status", labelStatus(p.STATUS_PENDAFTARAN)],
+            ["Kelas Peminatan", p.KELAS_PEMINATAN], ["Program", p.BOARDING === "Ya" ? "Boarding" : "Non-Boarding"], ["Gelombang", p.GELOMBANG],
+            ["Nilai Rapor", statNilai(p.NILAI_MAPEL_RAPOR)], ["Nilai TKA", statNilai(p.NILAI_MAPEL_TKA)],
+            ["No. HP", p.NO_HP], ["Alamat", p.ALAMAT],
+        ];
+        UI.cetakHalaman("Info Pendaftar - " + p.NAMA_LENGKAP, `
+            <h1>${UI.escapeHtml(p.NAMA_LENGKAP)}</h1>
+            <div class="sub">${UI.escapeHtml(cfgPublik.NAMA_SEKOLAH || "")} — SPMB ${UI.escapeHtml(cfgPublik.TAHUN_AJARAN || "")}</div>
+            <table>${baris.map(function (b) { return `<tr><td>${UI.escapeHtml(b[0])}</td><td>${UI.escapeHtml(b[1] == null || b[1] === "" ? "-" : String(b[1]))}</td></tr>`; }).join("")}</table>
+        `);
     }
 
     function renderSubDataDiri(detail, wadah) {
@@ -582,7 +793,7 @@
                 const res = await API.updateProfile(payload);
                 if (!res.ok) throw new Error(res.pesan);
                 UI.toast("Data pendaftar berhasil diperbarui.");
-                renderDetail();
+                renderDetail(true);
             } catch (err) {
                 errorBox.textContent = err.message || "Gagal menyimpan.";
                 errorBox.classList.add("tampil");
@@ -598,7 +809,12 @@
             try {
                 const res = await API.adminResetPIN(p.NO_PENDAFTARAN, pinBaru);
                 if (!res.ok) throw new Error(res.pesan);
-                UI.toast("PIN berhasil direset. Sampaikan PIN baru ke pendaftar secara aman.");
+                document.getElementById("fPinBaru").value = "";
+                await modal({
+                    judul: "PIN Berhasil Direset",
+                    isiHtml: `No. Pendaftaran <strong>${UI.escapeHtml(p.NO_PENDAFTARAN)}</strong> — ${UI.escapeHtml(p.NAMA_LENGKAP)}<br><br>PIN baru: <strong style="font-size:1.3rem; letter-spacing:0.2em;">${UI.escapeHtml(pinBaru)}</strong><br><br>Sampaikan PIN ini ke pendaftar secara aman — tidak akan ditampilkan lagi setelah ini ditutup.`,
+                    tombolOk: "Sudah Dicatat",
+                });
             } catch (err) { UI.toast(err.message || "Gagal reset PIN.", "error"); }
             btn.disabled = false; btn.textContent = "Reset";
         });
@@ -667,7 +883,7 @@
                     const res = await API.adminVerifikasiDokumen(dokumenId, statusBaru, catatan);
                     if (!res.ok) throw new Error(res.pesan);
                     UI.toast("Status dokumen diperbarui.");
-                    renderDetail();
+                    renderDetail(true);
                 } catch (err) { UI.toast(err.message || "Gagal memperbarui status.", "error"); btn.disabled = false; btn.textContent = statusBaru === "Valid" ? "Tandai Valid" : "Perlu Perbaikan"; }
             });
         });
@@ -723,7 +939,7 @@
                 const res = await API.adminSetPotongan(p.NO_PENDAFTARAN, document.getElementById("fPotongan").value, document.getElementById("fKetPotongan").value);
                 if (!res.ok) throw new Error(res.pesan);
                 UI.toast("Potongan disimpan.");
-                renderDetail();
+                renderDetail(true);
             } catch (err) { eb.textContent = err.message || "Gagal."; eb.classList.add("tampil"); btn.disabled = false; btn.textContent = "Simpan Potongan"; }
         });
 
@@ -735,7 +951,7 @@
                 const res = await API.adminInputPembayaran(p.NO_PENDAFTARAN, document.getElementById("fJenisBayar").value, document.getElementById("fMetodeBayar").value, document.getElementById("fNominalBayar").value);
                 if (!res.ok) throw new Error(res.pesan);
                 UI.toast("Pembayaran tercatat & terkonfirmasi.");
-                renderDetail();
+                renderDetail(true);
             } catch (err) { eb.textContent = err.message || "Gagal."; eb.classList.add("tampil"); btn.disabled = false; btn.textContent = "Catat & Konfirmasi"; }
         });
 
@@ -786,7 +1002,7 @@
                     const res = await API.adminKonfirmasiPembayaran(btn.getAttribute("data-konfirmasi"), "Dikonfirmasi", "", nominal);
                     if (!res.ok) throw new Error(res.pesan);
                     UI.toast("Pembayaran dikonfirmasi.");
-                    renderDetail();
+                    renderDetail(true);
                 } catch (err) { UI.toast(err.message || "Gagal.", "error"); btn.disabled = false; btn.textContent = "Konfirmasi"; }
             });
         });
@@ -799,7 +1015,7 @@
                     const res = await API.adminKonfirmasiPembayaran(btn.getAttribute("data-tolak"), "Ditolak", m.nilai.trim());
                     if (!res.ok) throw new Error(res.pesan);
                     UI.toast("Pembayaran ditolak.");
-                    renderDetail();
+                    renderDetail(true);
                 } catch (err) { UI.toast(err.message || "Gagal.", "error"); btn.disabled = false; btn.textContent = "Tolak"; }
             });
         });
@@ -822,9 +1038,10 @@
                 <div class="catatan amber">${UI.ikon("info")}<span>Daftar ini hanya menampilkan pengumuman yang sedang aktif (backend belum punya endpoint untuk melihat yang nonaktif).</span></div>
                 ${rows.length === 0 ? '<div class="kartu teks-lembut" style="text-align:center;">Belum ada pengumuman aktif.</div>' :
                     rows.map(function (r) {
-                        return `<div class="kartu" data-id="${UI.escapeHtml(r.PENGUMUMAN_ID)}" data-judul="${UI.escapeHtml(r.JUDUL)}" data-isi="${UI.escapeHtml(r.ISI || "")}">
+                        return `<div class="kartu" data-id="${UI.escapeHtml(r.PENGUMUMAN_ID)}" data-judul="${UI.escapeHtml(r.JUDUL)}" data-isi="${UI.escapeHtml(r.ISI || "")}" data-link-wa="${UI.escapeHtml(r.LINK_WA || "")}">
                             <div style="font-weight:800;">${UI.escapeHtml(r.JUDUL)}</div>
                             <p class="teks-lembut" style="margin:4px 0;">${UI.escapeHtml(r.ISI || "")}</p>
+                            ${r.LINK_WA ? `<a href="${UI.escapeHtml(r.LINK_WA)}" target="_blank" rel="noreferrer" class="tombol teks" style="padding-left:0;">${UI.ikon("wa")} Link WA terlampir</a>` : ""}
                             <div style="display:flex; gap:8px; margin-top:8px;">
                                 <button type="button" class="tombol teks" data-aksi-edit style="padding-left:0;">Edit</button>
                                 <button type="button" class="tombol teks" data-aksi-nonaktif style="padding-left:0; color:var(--merah);">Nonaktifkan</button>
@@ -844,7 +1061,7 @@
         document.querySelectorAll("[data-aksi-edit]").forEach(function (btn) {
             btn.addEventListener("click", function () {
                 const kartu = btn.closest("[data-id]");
-                bukaFormPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"));
+                bukaFormPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"), kartu.getAttribute("data-link-wa"));
             });
         });
         document.querySelectorAll("[data-aksi-nonaktif]").forEach(function (btn) {
@@ -852,7 +1069,7 @@
                 const kartu = btn.closest("[data-id]");
                 if (!confirm("Nonaktifkan pengumuman ini?")) return;
                 try {
-                    const res = await API.adminSimpanPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"), "Tidak");
+                    const res = await API.adminSimpanPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"), "Tidak", kartu.getAttribute("data-link-wa"));
                     if (!res.ok) throw new Error(res.pesan);
                     UI.toast("Pengumuman dinonaktifkan.");
                     renderPengumuman();
@@ -861,7 +1078,7 @@
         });
     }
 
-    function bukaFormPengumuman(id, judul, isi) {
+    function bukaFormPengumuman(id, judul, isi, linkWa) {
         const wadah = document.getElementById("formPengumuman");
         wadah.style.display = "block";
         wadah.innerHTML = `
@@ -870,6 +1087,8 @@
                 <input type="text" id="fJudulPengumuman" value="${UI.escapeHtml(judul)}">
                 <label>Isi</label>
                 <textarea id="fIsiPengumuman" rows="3">${UI.escapeHtml(isi)}</textarea>
+                <label>Link WhatsApp <span class="opsional">(opsional — buat dulu di wa.me, contoh: https://wa.me/6281xxxx?text=Assalamu%27alaikum...)</span></label>
+                <input type="text" id="fLinkWaPengumuman" value="${UI.escapeHtml(linkWa || "")}" placeholder="https://wa.me/6281...">
                 <div class="pesan-error-umum" id="errorPengumuman"></div>
                 <button type="button" class="utama blok" id="btnSimpanPengumuman" style="margin-top:10px;">Simpan</button>
             </div>
@@ -877,13 +1096,15 @@
         document.getElementById("btnSimpanPengumuman").addEventListener("click", async function () {
             const j = document.getElementById("fJudulPengumuman").value.trim();
             const i = document.getElementById("fIsiPengumuman").value.trim();
+            const lw = document.getElementById("fLinkWaPengumuman").value.trim();
             const errorBox = document.getElementById("errorPengumuman");
             errorBox.classList.remove("tampil");
             if (!j) { errorBox.textContent = "Judul wajib diisi."; errorBox.classList.add("tampil"); return; }
+            if (lw && lw.indexOf("https://wa.me/") !== 0) { errorBox.textContent = "Link WA harus diawali https://wa.me/"; errorBox.classList.add("tampil"); return; }
             const btn = document.getElementById("btnSimpanPengumuman");
             btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
             try {
-                const res = await API.adminSimpanPengumuman(id, j, i, "Ya");
+                const res = await API.adminSimpanPengumuman(id, j, i, "Ya", lw);
                 if (!res.ok) throw new Error(res.pesan);
                 UI.toast("Pengumuman tersimpan.");
                 renderPengumuman();
@@ -909,11 +1130,45 @@
             "FORM_TUTUP_JUDUL", "FORM_TUTUP_SUBJUDUL", "FORM_TUTUP_INFO_TAMBAHAN",
             "FITUR_SURVEI_AKTIF",
         ];
+        const keteranganKey = {
+            STATUS_PENDAFTARAN_DIBUKA: 'Isi persis salah satu: Ya / Offline / Tidak. "Ya" = semua bisa daftar & login. "Offline" = pendaftar baru ditolak, pendaftar lama & petugas/admin tetap bisa. "Tidak" = cuma admin yang bisa login.',
+            TAHUN_AJARAN: 'Teks bebas untuk ditampilkan ke pendaftar, contoh: 2026/2027.',
+            TAHUN_AJARAN_PENDEK: '4 digit, dipakai di depan No. Pendaftaran, contoh: 2627.',
+            BIAYA_PENDAFTARAN_L: 'Angka saja tanpa titik/Rp, contoh: 1750000. Biaya pendaftaran untuk JENIS_KELAMIN diawali "Laki".',
+            BIAYA_PENDAFTARAN_P: 'Angka saja tanpa titik/Rp, contoh: 1800000. Biaya pendaftaran untuk JENIS_KELAMIN diawali "Perempuan".',
+            BIAYA_DP_MIN: 'Angka saja, contoh: 100000. Minimal DP yang disarankan (tidak memblokir submit kalau kurang).',
+            KELAS_PEMINATAN_LIST: 'Daftar kelas dipisah koma, TANPA spasi setelah koma, contoh: Reguler,Tahfidz,Unggulan.',
+            WA_TEMPLATE_HUBUNGI_PENDAFTAR: 'Teks pesan WA ke pendaftar. Boleh pakai {nama_pendaftar} dan {no_pendaftaran}, otomatis diganti.',
+            JENIS_DOKUMEN_OPSIONAL: 'Daftar jenis dokumen TAMBAHAN dipisah koma (selain yang wajib), contoh: BUKTI_PRESTASI.',
+            REKENING_1: 'Teks bebas nomor rekening tujuan DP, contoh: BSI 7123456789 a.n. SMP Muhammadiyah 2 Cilacap. Kosongkan kalau belum ada.',
+            REKENING_2: 'Rekening alternatif kedua (opsional), format sama seperti REKENING_1.',
+            ADMIN_WA_1_NAMA: 'Nama admin yang tampil di tombol WA, contoh: Admin SPMB.',
+            ADMIN_WA_1_NOMOR: 'WAJIB format 628xxxxxxxxxx (awali 62, BUKAN 0) — kalau diawali 0 tombol WA tidak akan berfungsi.',
+            ADMIN_WA_2_NAMA: 'Sama seperti ADMIN_WA_1_NAMA, untuk admin kedua (opsional).',
+            ADMIN_WA_2_NOMOR: 'Sama seperti ADMIN_WA_1_NOMOR, format 628xxxxxxxxxx.',
+            FORM_TUTUP_JUDUL: 'Judul besar di halaman form_tutup.html saat pendaftaran ditutup.',
+            FORM_TUTUP_SUBJUDUL: 'Sub-judul/penjelasan singkat di halaman form_tutup.html.',
+            FORM_TUTUP_INFO_TAMBAHAN: 'Info tambahan opsional di halaman form_tutup.html, mis. kapan dibuka lagi.',
+            FITUR_SURVEI_AKTIF: 'Isi persis: Ya atau Tidak. Mengaktif/nonaktifkan kartu survei di halaman sukses.',
+        };
         isiTab.innerHTML = `
+            <div class="kartu">
+                <div class="bagian-judul">Cara Menambah Akun Petugas/Admin</div>
+                <p class="teks-lembut" style="margin:0 0 6px;">Buka sheet <strong>USERS</strong> di Spreadsheet langsung (belum ada menu Kelola User di dashboard ini), isi 1 baris per orang:</p>
+                <div class="baris-info"><span>USER_ID</span><span>Bebas, unik, mis. inisial</span></div>
+                <div class="baris-info"><span>NAMA</span><span>Nama lengkap</span></div>
+                <div class="baris-info"><span>EMAIL</span><span>Wajib unik, dipakai login</span></div>
+                <div class="baris-info"><span>PASSWORD</span><span>Bebas (tersimpan apa adanya, TIDAK di-hash)</span></div>
+                <div class="baris-info"><span>PIN</span><span>6 digit angka</span></div>
+                <div class="baris-info"><span>ROLE</span><span>HARUS persis huruf kecil: admin / petugas</span></div>
+                <div class="baris-info"><span>STATUS_AKTIF</span><span>HARUS persis: Ya</span></div>
+                <p class="teks-lembut" style="margin:8px 0 0;">Kesalahan paling umum: ROLE ditulis "Admin"/"Petugas" (huruf besar) atau STATUS_AKTIF bukan "Ya" persis — login akan selalu gagal meski data lain benar.</p>
+            </div>
             <div class="catatan amber">${UI.ikon("info")}<span>Hanya key CONFIG umum yang ditampilkan di sini. Key rahasia (SELF_CHECK_KEY, DRIVE_*_FOLDER_ID) sengaja tidak bisa diedit lewat dashboard — ubah langsung dari Google Sheet CONFIG kalau perlu.</span></div>
             <div class="kartu">
                 <label style="margin-top:0;">Pilih Key CONFIG</label>
                 <select id="fPilihKey">${keyUmum.map(function (k) { return `<option value="${k}">${k}</option>`; }).join("")}</select>
+                <div class="teks-kecil" id="keteranganKey" style="margin-top:6px; color:var(--tinta-lembut);"></div>
                 <label>Nilai Saat Ini</label>
                 <input type="text" id="fNilaiSekarang" disabled>
                 <label>Nilai Baru</label>
@@ -951,7 +1206,10 @@
             });
         });
         const selKey = document.getElementById("fPilihKey");
-        function isiNilaiSekarang() { document.getElementById("fNilaiSekarang").value = cfgPublik[selKey.value] || "(kosong)"; }
+        function isiNilaiSekarang() {
+            document.getElementById("fNilaiSekarang").value = cfgPublik[selKey.value] || "(kosong)";
+            document.getElementById("keteranganKey").textContent = keteranganKey[selKey.value] || "";
+        }
         selKey.addEventListener("change", isiNilaiSekarang);
         isiNilaiSekarang();
 

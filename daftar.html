@@ -178,7 +178,13 @@
             titik += `<div class="titik ${i < langkahSaatIni ? "selesai" : (i === langkahSaatIni ? "aktif" : "")}"></div>`;
         }
         const namaLangkah = ["", "Data Diri Calon Siswa", "Data Orang Tua/Wali", "Pilihan Sekolah &amp; Akademik", "Ringkasan &amp; Kirim"];
-        return `<div class="label-langkah">Langkah ${langkahSaatIni} dari 4</div>
+        // Draft lama (tab ditutup lalu dibuka lagi) langsung lompat ke step
+        // terakhir TANPA lewat Step 0 yang ada tombol Login -- orang yang
+        // SUDAH PUNYA AKUN bisa bingung/keliru isi formulir baru lagi.
+        // Pengingat kecil ini tampil di setiap step supaya jalan ke Login
+        // tetap ada kapan pun, bukan cuma sekali di Step 0.
+        const pengingatLogin = `<div class="catatan biru" style="margin-bottom:14px;">${UI.ikon("info")}<span>Sudah pernah daftar sebelumnya? <a href="login.html" style="font-weight:700;">Login di sini</a>, jangan isi formulir baru.</span></div>`;
+        return pengingatLogin + `<div class="label-langkah">Langkah ${langkahSaatIni} dari 4</div>
                 <div class="indikator-langkah">${titik}</div>
                 <h2 class="judul-langkah">${namaLangkah[langkahSaatIni]}</h2>`;
     }
@@ -815,6 +821,15 @@
     // -----------------------------------------------------------------
     // STEP 4 — RINGKASAN & KIRIM (Bagian 3 poin 5,6 & 9)
     // -----------------------------------------------------------------
+    /** Satu baris rekening + tombol salin (menyalin nomor rekening saja, bukan seluruh teks). */
+    function htmlBarisRekening(teks) {
+        const r = UI.uraikanRekening(teks);
+        return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px;">
+            <div style="font-weight:800; color:#fff;">${UI.escapeHtml(teks)}</div>
+            <button type="button" data-salin-rekening="${UI.escapeHtml(r.nomor)}" style="flex-shrink:0; padding:6px 9px; background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.25); color:#fff; font-size:0.68rem; border-radius:8px;">${UI.ikon("salin")} Salin</button>
+        </div>`;
+    }
+
     function htmlStep4() {
         const d = draft;
         const biayaDpMin = cfgPublik.BIAYA_DP_MIN || "0";
@@ -850,8 +865,7 @@
                 <div class="nilai-besar" style="font-size:1.05rem; margin-top:6px;">Silakan lakukan DP minimal ${UI.formatRupiah(biayaDpMin)}</div>
                 ${(cfgPublik.REKENING_1 || cfgPublik.REKENING_2) ? `
                     <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">Transfer ke nomor rekening:</div>
-                    ${cfgPublik.REKENING_1 ? `<div style="font-weight:800; color:#fff; margin-top:4px;">${UI.escapeHtml(cfgPublik.REKENING_1)}</div>` : ""}
-                    ${cfgPublik.REKENING_2 ? `<div style="font-weight:800; color:#fff; margin-top:4px;">${UI.escapeHtml(cfgPublik.REKENING_2)}</div>` : ""}
+                    ${[cfgPublik.REKENING_1, cfgPublik.REKENING_2].filter(Boolean).map(htmlBarisRekening).join("")}
                 ` : ""}
                 <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">Amankan kelas pilihanmu sekarang juga dengan membayar DP minimal — bisa dibayar &amp; diupload buktinya kapan saja dari Dashboard Pendaftar setelah mendaftar.</div>
                 ${cfgPublik.ADMIN_WA_1_NOMOR ? `<a class="tombol tombol-wa blok" style="margin-top:12px;" target="_blank" rel="noreferrer" href="${UI.linkWA(cfgPublik.ADMIN_WA_1_NOMOR, cfgPublik.ADMIN_WA_1_NAMA, "Halo, saya sudah selesai mendaftar dan ingin konfirmasi DP.")}">${UI.ikon("wa")} Hubungi Admin Setelah Pendaftaran Selesai</a>` : ""}
@@ -872,6 +886,9 @@
     }
 
     function setupStep4() {
+        document.querySelectorAll("[data-salin-rekening]").forEach(function (btn) {
+            btn.addEventListener("click", function () { UI.salin(btn.getAttribute("data-salin-rekening"), "Nomor rekening tersalin."); });
+        });
         document.querySelectorAll("[data-ubah]").forEach(function (el) {
             el.addEventListener("click", function () {
                 langkahSaatIni = Number(el.getAttribute("data-ubah"));

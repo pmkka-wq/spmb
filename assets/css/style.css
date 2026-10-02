@@ -171,6 +171,8 @@ p { margin: 0 0 10px; }
 }
 .catatan.amber { background: var(--amber-100); color: var(--amber-800); border: 1px solid #f0dfa8; }
 .catatan.hijau { background: var(--hijau-50); color: var(--hijau-700); border: 1px solid var(--hijau-100); }
+.catatan.biru { background: var(--biru-100, #e8f0fe); color: var(--biru-700, #1a56db); border: 1px solid #c8dafc; }
+.catatan.biru a { color: inherit; }
 .catatan svg { flex-shrink: 0; margin-top: 1px; }
 
 /* -------------------------------------------------------------------- */
@@ -363,3 +365,7 @@ button:disabled, .tombol:disabled { display: inline-flex; align-items: center; j
     z-index: 100; max-width: 90%; display: flex; align-items: center; gap: 8px;
     border: 1px solid var(--hijau-600);
 }
+
+/* Modal generik (dipakai sekolah.html & dashboard.html) */
+.modal-latar { position: fixed; inset: 0; background: rgba(15,30,20,0.55); display: flex; align-items: center; justify-content: center; z-index: 9999; padding: 16px; }
+.modal-kotak { background: #fff; border-radius: 16px; padding: 18px; width: 100%; max-width: 380px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); }

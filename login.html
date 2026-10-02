@@ -34,7 +34,7 @@
             <input type="text" id="f_hp" inputmode="numeric" maxlength="14" placeholder="08xxxxxxxxxx">
 
             <label>Nomor Pendaftaran</label>
-            <input type="text" id="f_noPendaftaran" placeholder="Contoh: 2627-1-0001">
+            <input type="text" id="f_noPendaftaran" placeholder="Contoh: 2627-1-0001" inputmode="text" autocapitalize="characters">
 
             <label>PIN Rahasia (6 digit)</label>
             <input type="password" id="f_pin" maxlength="6" inputmode="numeric" placeholder="••••••">
@@ -71,6 +71,23 @@
     if (API.sesiInfo().adaToken) {
         window.location.href = API.sesiInfo().role === "pendaftar" ? "dashboard.html" : "sekolah.html";
     }
+
+    // Format otomatis No. Pendaftaran saat mengetik: "262730004" -> "2627-3-0004".
+    // Pola: TAHUN(4) - KODE_GELOMBANG(1, angka/"K") - URUT(4). Pendaftar
+    // tidak perlu tahu/ketik tanda "-" sendiri.
+    (function () {
+        const el = document.getElementById("f_noPendaftaran");
+        el.addEventListener("input", function () {
+            let posisiKursorDariBelakang = el.value.length - el.selectionStart;
+            let bersih = el.value.toUpperCase().replace(/[^0-9K]/g, "");
+            let hasil = bersih.slice(0, 4);
+            if (bersih.length > 4) hasil += "-" + bersih.slice(4, 5);
+            if (bersih.length > 5) hasil += "-" + bersih.slice(5, 9);
+            el.value = hasil;
+            const posisi = Math.max(0, el.value.length - posisiKursorDariBelakang);
+            el.setSelectionRange(posisi, posisi);
+        });
+    })();
 
     // Panah "kembali" pakai ikon SVG (di-render via JS, bukan literal ${})
     document.querySelector('a.tombol.teks').innerHTML = UI.ikon("panahKiri") + " Kembali ke Beranda";

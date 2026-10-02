@@ -209,6 +209,58 @@ const API = (() => {
      * @param {File} file
      * @returns {Promise<string>}
      */
+    /**
+     * Kompres gambar (jpg/png) di browser via <canvas> sebelum upload,
+     * target ukuran akhir ~1MB. PDF TIDAK dikompres (butuh library khusus,
+     * di luar cakupan — PDF besar cukup ditolak validasi ukuran biasa).
+     * Turunkan quality JPEG bertahap, lalu perkecil dimensi kalau masih
+     * kebesaran. Mengembalikan File baru, atau file asli kalau sudah
+     * di bawah target / bukan gambar / canvas gagal (tidak pernah
+     * menggagalkan upload hanya karena kompresi gagal).
+     * @param {File} file
+     * @param {number} targetBytes
+     * @returns {Promise<File>}
+     */
+    function _kompresGambar(file, targetBytes) {
+        targetBytes = targetBytes || 1024 * 1024;
+        if (!file.type || file.type.indexOf("image/") !== 0 || file.size <= targetBytes) return Promise.resolve(file);
+
+        return new Promise(function (resolve) {
+            const img = new Image();
+            const urlAsal = URL.createObjectURL(file);
+            img.onload = function () {
+                URL.revokeObjectURL(urlAsal);
+                let lebar = img.naturalWidth, tinggi = img.naturalHeight;
+                const canvas = document.createElement("canvas");
+                const ctx = canvas.getContext("2d");
+
+                function render(skala) {
+                    canvas.width = Math.round(lebar * skala);
+                    canvas.height = Math.round(tinggi * skala);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                }
+
+                function cobaKualitas(kualitas, skala, sisaPercobaan) {
+                    render(skala);
+                    canvas.toBlob(function (blob) {
+                        if (!blob) { resolve(file); return; }
+                        if (blob.size <= targetBytes || sisaPercobaan <= 0) {
+                            resolve(new File([blob], file.name.replace(/\.(png|jpe?g)$/i, "") + ".jpg", { type: "image/jpeg" }));
+                            return;
+                        }
+                        // Masih kebesaran: turunkan quality dulu, kalau sudah rendah turunkan dimensi.
+                        const kualitasBaru = kualitas > 0.4 ? kualitas - 0.15 : kualitas;
+                        const skalaBaru = kualitas > 0.4 ? skala : skala * 0.8;
+                        cobaKualitas(kualitasBaru, skalaBaru, sisaPercobaan - 1);
+                    }, "image/jpeg", kualitas);
+                }
+                cobaKualitas(0.85, 1, 6);
+            };
+            img.onerror = function () { URL.revokeObjectURL(urlAsal); resolve(file); };
+            img.src = urlAsal;
+        });
+    }
+
     function _fileKeBase64(file) {
         return new Promise(function (resolve, reject) {
             const reader = new FileReader();
@@ -265,10 +317,24 @@ const API = (() => {
     }
 
     async function logout() {
-        const hasil = await _post({ action: "logout" }, true);
-        _hapusSesi();
-        return hasil;
+        try {
+            const hasil = await _post({ action: "logout" }, true);
+            _hapusSesi();
+            return hasil;
+        } catch (err) {
+            _hapusSesi();
+            throw err;
+        }
     }
+
+    /**
+     * Hapus sesi LOKAL saja (localStorage), SINKRON, tanpa menunggu server.
+     * WAJIB dipanggil sebelum redirect ke login.html — kalau tidak, token
+     * lama masih ada saat login.html cek sesiInfo().adaToken dan langsung
+     * redirect balik ke dashboard (bug "klik Keluar tidak pernah benar-benar
+     * keluar" / loop). Panggilan logout() ke server boleh menyusul di background.
+     */
+    function hapusSesiLokal() { _hapusSesi(); }
 
     async function verifyToken() {
         return _get({ action: "verifyToken" }, true);
@@ -345,6 +411,7 @@ const API = (() => {
     }
 
     async function uploadDokumen(jenisDokumen, file) {
+        file = await _kompresGambar(file, 1024 * 1024);
         const maxBytes = (APP_CONFIG.maxUploadMB || 2) * 1024 * 1024;
         if (file.size > maxBytes) {
             return { ok: false, pesan: `Ukuran file melebihi batas ${APP_CONFIG.maxUploadMB} MB.` };
@@ -382,6 +449,7 @@ const API = (() => {
             nominal: nominal || "",
         };
         if (file) {
+            file = await _kompresGambar(file, 1024 * 1024);
             const maxBytes = (APP_CONFIG.maxUploadMB || 2) * 1024 * 1024;
             if (file.size > maxBytes) {
                 return { ok: false, pesan: `Ukuran file melebihi batas ${APP_CONFIG.maxUploadMB} MB.` };
@@ -400,6 +468,11 @@ const API = (() => {
 
     async function adminGetPendaftar(filter = {}) {
         return _get({ action: "adminGetPendaftar", ...filter }, true);
+    }
+
+    /** Timestamp (ms) aktivitas terakhir — dipakai cek apakah cache list pendaftar basi. */
+    async function adminLogTerakhir() {
+        return _get({ action: "adminLogTerakhir" }, true);
     }
 
     async function adminGetDetail(noPendaftaran) {
@@ -432,6 +505,11 @@ const API = (() => {
     }
 
     /** [PETUGAS/ADMIN] Catat pembayaran langsung (tunai/loket), otomatis Dikonfirmasi. */
+    /** [PENDAFTAR] Isi nilai/prestasi yang masih kosong saja (field yang sudah terisi tidak tertimpa). */
+    async function isiNilaiKosong(nilaiRapor, nilaiTka, prestasi) {
+        return _post({ action: "isiNilaiKosong", nilaiRapor, nilaiTka, prestasi }, true);
+    }
+
     async function adminInputPembayaran(noPendaftaran, jenisPembayaran, metode, nominal, catatan) {
         return _post({ action: "adminInputPembayaran", noPendaftaran, jenisPembayaran, metode, nominal, catatan: catatan || "" }, true);
     }
@@ -444,6 +522,16 @@ const API = (() => {
     /** [PETUGAS/ADMIN] Statistik dashboard (cache server 5 menit; refresh=true paksa hitung ulang). */
     async function adminStatistik(refresh) {
         return _get(refresh ? { action: "adminStatistik", refresh: "1" } : { action: "adminStatistik" }, true);
+    }
+
+    /** [PETUGAS/ADMIN] Daftar pengajuan perubahan data. semua=true untuk lihat yang sudah selesai juga. */
+    async function adminGetPengajuan(semua) {
+        return _get(semua ? { action: "adminGetPengajuan", semua: "1" } : { action: "adminGetPengajuan" }, true);
+    }
+
+    /** [PETUGAS/ADMIN] Tandai pengajuan Selesai/Ditolak. */
+    async function adminSelesaikanPengajuan(pengajuanId, statusBaru, catatan) {
+        return _post({ action: "adminSelesaikanPengajuan", pengajuanId, statusBaru, catatan: catatan || "" }, true);
     }
 
     /** [ADMIN] Hapus log lebih tua dari 60/90/180 hari. konfirmasi harus "HAPUS". */
@@ -459,13 +547,14 @@ const API = (() => {
         return hasil;
     }
 
-    async function adminSimpanPengumuman(pengumumanId, judul, isi, aktif) {
+    async function adminSimpanPengumuman(pengumumanId, judul, isi, aktif, linkWa) {
         return _post({
             action: "adminSimpanPengumuman",
             pengumumanId: pengumumanId || "",
             judul,
             isi: isi || "",
             aktif: aktif || "Ya",
+            linkWa: linkWa || "",
         }, true);
     }
 
@@ -494,6 +583,7 @@ const API = (() => {
         login,
         loginSekolah,
         logout,
+        hapusSesiLokal,
         verifyToken,
 
         // Status gerbang & referensi
@@ -519,6 +609,7 @@ const API = (() => {
 
         // Admin & Petugas
         adminGetPendaftar,
+        adminLogTerakhir,
         adminGetDetail,
         adminVerifikasiDokumen,
         adminUpdateStatus,
@@ -526,10 +617,13 @@ const API = (() => {
         adminUpdateConfig,
         adminResetPIN,
         getFile,
+        isiNilaiKosong,
         adminInputPembayaran,
         adminSetPotongan,
         adminStatistik,
         adminBersihkanLog,
+        adminGetPengajuan,
+        adminSelesaikanPengajuan,
         adminSimpanPengumuman,
     };
 

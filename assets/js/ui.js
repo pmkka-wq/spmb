@@ -23,6 +23,7 @@ const UI = (() => {
         salin: `<svg ${_svgAtribut}><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M4 15V5a2 2 0 0 1 2-2h10"></path></svg>`,
         keluar: `<svg ${_svgAtribut}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>`,
         jam: `<svg ${_svgAtribut}><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline></svg>`,
+        lonceng: `<svg ${_svgAtribut}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>`,
         perisai: `<svg ${_svgAtribut}><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5z"></path></svg>`,
         petir: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>`,
         spinner: `<svg ${_svgAtribut} class="ikon-spin"><path d="M21 12a9 9 0 1 1-9-9"></path></svg>`,
@@ -134,6 +135,76 @@ const UI = (() => {
     }
 
     /**
+     * Salin teks ke clipboard (dgn fallback untuk browser/WebView lama
+     * yang tidak dukung navigator.clipboard), lalu tampilkan toast.
+     * Dipakai untuk tombol salin rekening, No. Pendaftaran, dll.
+     * @param {string} teks
+     * @param {string} [labelToast] - teks di toast, default "Tersalin."
+     */
+    async function salin(teks, labelToast) {
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(teks);
+            } else {
+                const ta = document.createElement("textarea");
+                ta.value = teks;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.focus(); ta.select();
+                document.execCommand("copy");
+                ta.remove();
+            }
+            toast(labelToast || "Tersalin.");
+        } catch (err) {
+            toast("Gagal menyalin — salin manual ya.", "error");
+        }
+    }
+
+    /**
+     * Pecah "BSI 7123456789 a.n. Nama" jadi { bank, nomor, pemilik } kalau
+     * polanya cocok; kalau tidak, nomor fallback ke seluruh teks (tetap
+     * bisa disalin, cuma label banknya kosong).
+     */
+    function uraikanRekening(teks) {
+        const s = String(teks || "");
+        const m = s.match(/^(\S+)\s+([\d\-.\s]{6,})\s*(?:a\.?n\.?\s*(.+))?$/i);
+        if (!m) return { bank: "", nomor: s, pemilik: "" };
+        return { bank: m[1], nomor: m[2].trim(), pemilik: (m[3] || "").trim() };
+    }
+
+    /**
+     * Buka tab baru berisi halaman cetak sederhana lalu panggil print()
+     * (pengguna bisa pilih "Save as PDF" di dialog cetak browser). Sengaja
+     * TIDAK pakai library PDF (jsPDF dkk) supaya aplikasi tetap ringan —
+     * hasil cetak tetap rapi karena CSS @media print disiapkan khusus.
+     * @param {string} judul - jadi <title> tab & nama file saat disimpan
+     * @param {string} htmlIsi - HTML konten (tanpa <html>/<body>)
+     */
+    function cetakHalaman(judul, htmlIsi) {
+        const w = window.open("", "_blank");
+        if (!w) { toast("Popup diblokir browser — izinkan popup untuk mencetak.", "error"); return; }
+        w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(judul)}</title>
+            <style>
+                * { box-sizing: border-box; }
+                body { font-family: -apple-system, system-ui, sans-serif; color: #1a2e22; padding: 32px; max-width: 700px; margin: 0 auto; }
+                h1 { font-size: 1.3rem; margin: 0 0 4px; }
+                .sub { color: #6b7c72; font-size: 0.85rem; margin-bottom: 20px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                td { padding: 8px 4px; border-bottom: 1px solid #e5e9e6; font-size: 0.92rem; }
+                td:first-child { color: #6b7c72; width: 45%; }
+                td:last-child { font-weight: 700; }
+                .cap { margin-top: 28px; font-size: 0.75rem; color: #6b7c72; text-align: center; }
+                @media print { body { padding: 0; } }
+            </style>
+            </head><body>${htmlIsi}
+            <div class="cap">Dicetak dari SPMB — ${new Date().toLocaleString("id-ID")}</div>
+            <script>window.onload = function () { window.print(); };<\/script>
+            </body></html>`);
+        w.document.close();
+    }
+
+    /**
      * Bungkus SEMUA field password di halaman dengan tombol mata
      * tampilkan/sembunyikan. Panggil sekali setelah field password
      * dirender ke DOM. Tidak butuh markup tambahan di HTML.
@@ -162,5 +233,5 @@ const UI = (() => {
         });
     }
 
-    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA, isiTemplate, bukaFile, pasangToggleSandi };
+    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA, isiTemplate, bukaFile, cetakHalaman, salin, uraikanRekening, pasangToggleSandi };
 })();

@@ -78,10 +78,11 @@
     function keluar() {
         const btn = document.getElementById("btnKeluar");
         if (btn) { btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Keluar…"; }
-        // Hapus sesi & redirect SEGERA (jangan tunggu network) — penyebab
-        // tombol "Keluar" terasa stuck adalah await API.logout() diam-diam
-        // menunggu round-trip server sebelum redirect. Panggil logout tetap,
-        // tapi di background; sesi lokal sudah dianggap berakhir begitu diklik.
+        // Hapus sesi lokal SINKRON dulu -> login.html tidak lagi melihat
+        // token lama dan redirect balik ke dashboard (bug loop "tidak
+        // pernah benar-benar keluar"). Panggilan ke server menyusul di
+        // background, tidak menunggu (supaya tombol tidak terasa stuck).
+        API.hapusSesiLokal();
         API.logout().catch(function () { /* diamkan, tidak blocking */ });
         window.location.href = "login.html";
     }
@@ -96,13 +97,17 @@
                 <div class="hero-gelap" style="padding:16px;">
                     <div style="display:flex; align-items:center; justify-content:space-between;">
                         <span class="badge hijau">${UI.escapeHtml(labelStatus(profil.STATUS_PENDAFTARAN))}</span>
-                        <button type="button" class="gelap" id="btnKeluar" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("keluar")} Keluar</button>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <button type="button" class="gelap" id="btnLonceng" style="position:relative; padding:7px 9px;">${UI.ikon("lonceng")}<span id="titikLonceng" style="display:none; position:absolute; top:4px; right:5px; width:8px; height:8px; border-radius:50%; background:var(--merah);"></span></button>
+                            <button type="button" class="gelap" id="btnKeluar" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("keluar")} Keluar</button>
+                        </div>
                     </div>
                     <h1 style="margin-top:10px; font-size:1.1rem;">${UI.escapeHtml(profil.NAMA_LENGKAP || "-")} <span style="font-weight:500; opacity:.8;">· ${UI.escapeHtml(profil.NISN || "-")}</span></h1>
                     <div class="teks-kecil" style="color:#cbd5c8;">No. Reg: ${UI.escapeHtml(profil.NO_PENDAFTARAN || "-")}</div>
                     <div class="teks-kecil" style="color:#cbd5c8;">${UI.escapeHtml(profil.ASAL_SEKOLAH || "-")}</div>
                     <hr class="garis-pisah" style="border-color:rgba(255,255,255,0.12); background:rgba(255,255,255,0.12);">
                     <div class="teks-kecil" style="color:#cbd5c8;">${UI.escapeHtml(profil.KELAS_PEMINATAN || "Peminatan belum dipilih")} · ${profil.BOARDING === "Ya" ? "Boarding" : "Non-Boarding"}</div>
+                    ${htmlTombolWAAdmin()}
                 </div>
             </div>
 
@@ -112,12 +117,15 @@
                     <button type="button" class="tab-btn" data-tab="pembayaran">${UI.ikon("info")}<span>Bayar</span></button>
                     <button type="button" class="tab-btn" data-tab="dokumen">${UI.ikon("unggah")}<span>Dokumen</span></button>
                     <button type="button" class="tab-btn" data-tab="data">${UI.ikon("kunci")}<span>Data Saya</span></button>
+                    <button type="button" class="tab-btn" data-tab="nilai">${UI.ikon("info")}<span>Nilai</span></button>
                 </div>
                 <div id="isiTab"></div>
             </div>
         `;
 
         document.getElementById("btnKeluar").addEventListener("click", keluar);
+        document.getElementById("btnLonceng").addEventListener("click", bukaPengumuman);
+        cekPengumumanBelumDibaca();
         document.querySelectorAll(".tab-btn").forEach(function (btn) {
             btn.addEventListener("click", function () { tabAktif = btn.getAttribute("data-tab"); render(); });
         });
@@ -125,7 +133,7 @@
             btn.classList.toggle("aktif", btn.getAttribute("data-tab") === tabAktif);
         });
 
-        const rute = { status: renderStatus, dokumen: renderDokumen, pembayaran: renderPembayaran, data: renderData };
+        const rute = { status: renderStatus, dokumen: renderDokumen, pembayaran: renderPembayaran, data: renderData, nilai: renderNilai };
         rute[tabAktif]();
     }
 
@@ -143,6 +151,68 @@
         });
         return o;
     }
+    // -----------------------------------------------------------------
+    // PENGUMUMAN — modal + lonceng notifikasi. Status "sudah dibaca"
+    // disimpan di localStorage per perangkat (tidak ada sheet pelacak
+    // per-pendaftar, sengaja — tetap simpel sesuai Bagian 3 poin 16).
+    // -----------------------------------------------------------------
+    const KUNCI_PENGUMUMAN_DIBACA = "SPMB_PENGUMUMAN_DIBACA";
+    function idPengumumanDibaca() {
+        try { return JSON.parse(localStorage.getItem(KUNCI_PENGUMUMAN_DIBACA) || "[]"); } catch (e) { return []; }
+    }
+    async function cekPengumumanBelumDibaca() {
+        try {
+            const res = await API.getPengumuman();
+            const rows = (res.ok && res.data && res.data.pengumuman) ? res.data.pengumuman : [];
+            const dibaca = idPengumumanDibaca();
+            const adaBaru = rows.some(function (r) { return dibaca.indexOf(r.PENGUMUMAN_ID) === -1; });
+            const titik = document.getElementById("titikLonceng");
+            if (titik) titik.style.display = adaBaru ? "block" : "none";
+        } catch (err) { /* diamkan, ikon lonceng tetap tampil tanpa badge */ }
+    }
+    async function bukaPengumuman() {
+        const latar = document.createElement("div");
+        latar.className = "modal-latar";
+        latar.innerHTML = `<div class="modal-kotak" style="max-width:420px; max-height:80vh; overflow-y:auto;">
+            <h3 style="margin:0 0 10px;">${UI.ikon("lonceng")} Pengumuman</h3>
+            <div id="isiModalPengumuman"><div class="pemuat"><div class="spinner"></div>Memuat…</div></div>
+            <button type="button" class="blok" id="btnTutupPengumuman" style="margin-top:12px;">Tutup</button>
+        </div>`;
+        document.body.appendChild(latar);
+        latar.querySelector("#btnTutupPengumuman").addEventListener("click", function () { latar.remove(); });
+        latar.addEventListener("click", function (e) { if (e.target === latar) latar.remove(); });
+
+        try {
+            const res = await API.getPengumuman();
+            const rows = (res.ok && res.data && res.data.pengumuman) ? res.data.pengumuman : [];
+            const isi = document.getElementById("isiModalPengumuman");
+            isi.innerHTML = rows.length ? rows.map(function (r) {
+                return `<div class="kartu" style="margin-bottom:8px;">
+                    <div style="font-weight:800;">${UI.escapeHtml(r.JUDUL)}</div>
+                    <p class="teks-lembut" style="margin:4px 0;">${UI.escapeHtml(r.ISI || "")}</p>
+                    ${r.LINK_WA ? `<a href="${UI.escapeHtml(r.LINK_WA)}" target="_blank" rel="noreferrer" class="tombol tombol-wa blok" style="margin-top:6px;">${UI.ikon("wa")} Buka WhatsApp</a>` : ""}
+                </div>`;
+            }).join("") : '<div class="teks-lembut" style="text-align:center;">Belum ada pengumuman.</div>';
+
+            // Tandai semua sudah dibaca begitu modal dibuka
+            const sudah = idPengumumanDibaca();
+            rows.forEach(function (r) { if (sudah.indexOf(r.PENGUMUMAN_ID) === -1) sudah.push(r.PENGUMUMAN_ID); });
+            localStorage.setItem(KUNCI_PENGUMUMAN_DIBACA, JSON.stringify(sudah));
+            const titik = document.getElementById("titikLonceng");
+            if (titik) titik.style.display = "none";
+        } catch (err) {
+            document.getElementById("isiModalPengumuman").innerHTML = '<div class="pesan-error-umum tampil">Gagal memuat pengumuman.</div>';
+        }
+    }
+
+    /** Tombol kecil "Hubungi Admin" — tampil di header, ada di semua tab. */
+    function htmlTombolWAAdmin() {
+        const nomor = cfgPublik.ADMIN_WA_1_NOMOR;
+        if (!nomor) return "";
+        const pesan = "Assalamu'alaikum, saya " + (profil.NAMA_LENGKAP || "") + " (No. Pendaftaran " + (profil.NO_PENDAFTARAN || "") + ") ingin bertanya.";
+        return `<a class="tombol tombol-wa blok" style="margin-top:10px; font-size:0.72rem;" target="_blank" rel="noreferrer" href="${UI.linkWA(nomor, cfgPublik.ADMIN_WA_1_NAMA, pesan)}">${UI.ikon("wa")} Hubungi Admin SPMB</a>`;
+    }
+
     function tombolBuka(jenis, id, teks) {
         return `<button type="button" class="tombol teks" data-buka="${jenis}" data-id="${UI.escapeHtml(id)}" style="padding-left:0;">${teks} ${UI.ikon("panah")}</button>`;
     }
@@ -177,7 +247,7 @@
         if (rb.lunas) {
             penerimaan = { judul: "Diterima", cls: "hijau", desk: "Pembayaran daftar ulang sudah lunas. Selamat bergabung di " + (cfgPublik.NAMA_SEKOLAH || "sekolah kami") + "!" };
         } else if (rb.total > 0) {
-            penerimaan = { judul: "Menunggu Daftar Ulang", cls: "amber", desk: "Pembayaran diterima " + UI.formatRupiah(rb.total) + ". Sisa " + UI.formatRupiah(rb.sisa) + " untuk melunasi daftar ulang — bisa dicicil kapan saja lewat tab Bayar." };
+            penerimaan = { judul: "Menunggu Daftar Ulang", cls: "amber", desk: "Pembayaran diterima " + UI.formatRupiah(rb.total) + ". Sisa " + UI.formatRupiah(rb.sisa) + " untuk melunasi daftar ulang — silakan upload bukti pembayaran melalui tab Bayar, bisa dicicil kapan saja." };
         } else {
             penerimaan = { judul: "Belum Ada Pembayaran", cls: "abu", desk: "Amankan kelas pilihanmu sekarang dengan membayar DP minimal " + UI.formatRupiah(cfgPublik.BIAYA_DP_MIN) + ". Buka tab Bayar." };
         }
@@ -203,7 +273,7 @@
                 <span class="badge ${dok.cls}">${UI.escapeHtml(dok.judul)}</span>
                 <p class="teks-lembut" style="margin:8px 0 0;">${UI.escapeHtml(dok.desk)}</p>
             </div>
-            <div class="catatan hijau">${UI.ikon("info")}<span>Status <strong>Diterima</strong> ditentukan oleh pembayaran daftar ulang. Kelengkapan dokumen tetap perlu dipenuhi, tetapi tidak mengubah status penerimaan.</span></div>
+            <div class="catatan hijau">${UI.ikon("info")}<span>Status <strong>Diterima</strong> muncul begitu pembayaran daftar ulang lunas. Kelengkapan dokumen tetap perlu dipenuhi, tetapi tidak memengaruhi status penerimaan.</span></div>
         `;
     }
 
@@ -230,7 +300,13 @@
                 <div class="label-mini">Amankan Kelas Sekarang</div>
                 <div class="nilai-besar" style="font-size:1.1rem;">Bayar DP minimal ${UI.formatRupiah(cfgPublik.BIAYA_DP_MIN)}</div>
                 <div class="teks-kecil" style="color:#cbd5c8; margin-top:6px;">Kursi kelas pilihanmu terjamin setelah DP dikonfirmasi. Sisa biaya boleh dicicil sampai lunas.</div>
-                ${rekening.length ? `<div class="teks-kecil" style="color:#cbd5c8; margin-top:8px;">${rekening.map(function (r) { return UI.escapeHtml(r); }).join("<br>")}</div>` : ""}
+                ${rekening.length ? `<div style="margin-top:8px;">${rekening.map(function (r) {
+                    const u = UI.uraikanRekening(r);
+                    return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px;">
+                        <span class="teks-kecil" style="color:#cbd5c8;">${UI.escapeHtml(r)}</span>
+                        <button type="button" data-salin-rekening="${UI.escapeHtml(u.nomor)}" style="flex-shrink:0; padding:5px 8px; background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.25); color:#fff; font-size:0.65rem; border-radius:8px;">${UI.ikon("salin")} Salin</button>
+                    </div>`;
+                }).join("")}</div>` : ""}
             </div>
 
             <div class="kartu" style="margin-top:12px;">
@@ -275,6 +351,9 @@
             </div>
         `;
         pasangTombolBuka(isiTab);
+        isiTab.querySelectorAll("[data-salin-rekening]").forEach(function (btn) {
+            btn.addEventListener("click", function () { UI.salin(btn.getAttribute("data-salin-rekening"), "Nomor rekening tersalin."); });
+        });
 
         document.getElementById("btnUploadBayar").addEventListener("click", function () {
             document.getElementById("formUploadBayar").style.display = "block";
@@ -397,6 +476,109 @@
     }
 
     // -----------------------------------------------------------------
+    // TAB NILAI — nilai yang SUDAH TERISI dikunci (hanya petugas yang bisa
+    // koreksi lewat Ajukan Perubahan Data); yang MASIH KOSONG bisa diisi
+    // sendiri langsung tersimpan (lihat isiNilaiKosongHandler).
+    // -----------------------------------------------------------------
+    function renderNilai() {
+        const isiTab = document.getElementById("isiTab");
+        const p = profil;
+
+        function blokIsiNilai(judul, kolom, daftarMapelCfg) {
+            const existing = {};
+            parseNilai(p[kolom]).forEach(function (x) { existing[x[0]] = x[1]; });
+            const semuaMapel = UI.csvKeArray(daftarMapelCfg);
+            Object.keys(existing).forEach(function (m) { if (semuaMapel.indexOf(m) === -1) semuaMapel.push(m); });
+            const terisi = semuaMapel.filter(function (m) { return existing[m] !== undefined; });
+            const kosong = semuaMapel.filter(function (m) { return existing[m] === undefined; });
+            const vals = terisi.map(function (m) { return parseFloat(String(existing[m]).replace(",", ".")); }).filter(function (v) { return !isNaN(v); });
+            const tot = vals.reduce(function (a, b) { return a + b; }, 0);
+
+            return `<div class="kartu">
+                <div class="bagian-judul">${judul}</div>
+                ${terisi.length ? terisi.map(function (m) { return `<div class="baris-info"><span>${UI.escapeHtml(m)}</span><span>${UI.escapeHtml(existing[m])}</span></div>`; }).join("") : '<div class="teks-lembut">Belum ada nilai terisi.</div>'}
+                ${vals.length ? `<div class="ringkasan-nilai"><span>Total: <strong>${tot.toFixed(2)}</strong></span><span>Rata-rata: <strong>${(tot / vals.length).toFixed(2)}</strong></span></div>` : ""}
+                ${kosong.length ? `
+                    <div class="bagian-judul" style="margin-top:14px;">Lengkapi yang Masih Kosong</div>
+                    ${kosong.map(function (m) { return `<div class="field"><label style="margin-top:4px; font-size:0.72rem;">${UI.escapeHtml(m)}</label><input type="text" inputmode="decimal" data-isi-nilai="${kolom}" data-mapel="${UI.escapeHtml(m)}" placeholder="0-100"></div>`; }).join("")}
+                ` : '<div class="teks-kecil" style="margin-top:8px;">Semua nilai sudah terisi.</div>'}
+            </div>`;
+        }
+
+        isiTab.innerHTML = `
+            <h3>Nilai &amp; Prestasi</h3>
+            <div class="catatan hijau">${UI.ikon("info")}<span>Nilai yang sudah terisi terkunci di sini — kalau keliru, ajukan koreksi lewat tab Data Saya. Yang masih kosong bisa langsung diisi &amp; tersimpan.</span></div>
+            ${blokIsiNilai("Nilai Rapor", "NILAI_MAPEL_RAPOR", cfgPublik.MAPEL_RAPOR_LIST)}
+            ${blokIsiNilai("Nilai TKA", "NILAI_MAPEL_TKA", cfgPublik.MAPEL_TKA_LIST)}
+            <div class="kartu">
+                <div class="bagian-judul">Prestasi</div>
+                ${String(p.PRESTASI || "").trim()
+                    ? `<div class="teks-lembut">${UI.escapeHtml(p.PRESTASI)}</div>`
+                    : `<textarea id="f_prestasiBaru" rows="2" placeholder="Tulis prestasi yang pernah diraih (opsional)"></textarea>`}
+            </div>
+            <div class="pesan-error-umum" id="errorNilai"></div>
+            <button type="button" class="utama blok" id="btnSimpanNilai" style="margin-top:10px;">Simpan Nilai Baru</button>
+        `;
+
+        document.getElementById("btnSimpanNilai").addEventListener("click", async function () {
+            const errorBox = document.getElementById("errorNilai");
+            errorBox.classList.remove("tampil");
+            const kumpul = { NILAI_MAPEL_RAPOR: [], NILAI_MAPEL_TKA: [] };
+            let salah = false;
+            document.querySelectorAll("[data-isi-nilai]").forEach(function (el) {
+                const v = el.value.trim().replace(",", ".");
+                if (!v) return;
+                if (isNaN(parseFloat(v)) || parseFloat(v) < 0 || parseFloat(v) > 100) salah = true;
+                kumpul[el.getAttribute("data-isi-nilai")].push(el.getAttribute("data-mapel") + ":" + v);
+            });
+            if (salah) { errorBox.textContent = "Nilai harus angka 0-100."; errorBox.classList.add("tampil"); return; }
+            const prestasiEl = document.getElementById("f_prestasiBaru");
+            const prestasiBaru = prestasiEl ? prestasiEl.value.trim() : "";
+            if (!kumpul.NILAI_MAPEL_RAPOR.length && !kumpul.NILAI_MAPEL_TKA.length && !prestasiBaru) {
+                errorBox.textContent = "Isi minimal satu nilai atau prestasi dulu.";
+                errorBox.classList.add("tampil");
+                return;
+            }
+            const btn = document.getElementById("btnSimpanNilai");
+            btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
+            try {
+                const res = await API.isiNilaiKosong(kumpul.NILAI_MAPEL_RAPOR.join(","), kumpul.NILAI_MAPEL_TKA.join(","), prestasiBaru);
+                if (!res.ok) throw new Error(res.pesan);
+                UI.toast("Nilai berhasil disimpan.");
+                const resProfil = await API.getProfile();
+                if (resProfil.ok) profil = resProfil.data.pendaftar;
+                renderNilai();
+            } catch (err) {
+                errorBox.textContent = err.message || "Gagal menyimpan.";
+                errorBox.classList.add("tampil");
+                btn.disabled = false; btn.textContent = "Simpan Nilai Baru";
+            }
+        });
+    }
+
+    /** Unduh Bukti Pendaftaran (Nama, TTL, NISN, Asal Sekolah, No. Reg, Kelas, Boarding, ringkasan nilai). */
+    function unduhBuktiPendaftaran() {
+        const p = profil;
+        function statNilai(str) {
+            const vals = parseNilai(str).map(function (x) { return parseFloat(x[1].replace(",", ".")); }).filter(function (v) { return !isNaN(v); });
+            if (!vals.length) return "Belum diisi";
+            const tot = vals.reduce(function (a, b) { return a + b; }, 0);
+            return vals.length + " nilai — Jumlah: " + tot.toFixed(2) + " — Rata-rata: " + (tot / vals.length).toFixed(2);
+        }
+        const baris = [
+            ["Nama", p.NAMA_LENGKAP], ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR], ["NISN", p.NISN],
+            ["Asal Sekolah", p.ASAL_SEKOLAH], ["Nomor Pendaftaran", p.NO_PENDAFTARAN], ["Kelas Peminatan", p.KELAS_PEMINATAN],
+            ["Boarding", p.BOARDING === "Ya" ? "Ya" : "Tidak"],
+            ["Nilai Rapor", statNilai(p.NILAI_MAPEL_RAPOR)], ["Nilai TKA", statNilai(p.NILAI_MAPEL_TKA)],
+        ];
+        UI.cetakHalaman("Bukti Pendaftaran - " + p.NAMA_LENGKAP, `
+            <h1>Bukti Pendaftaran</h1>
+            <div class="sub">${UI.escapeHtml(cfgPublik.NAMA_SEKOLAH || "")} — SPMB ${UI.escapeHtml(cfgPublik.TAHUN_AJARAN || "")}</div>
+            <table>${baris.map(function (b) { return `<tr><td>${UI.escapeHtml(b[0])}</td><td>${UI.escapeHtml(b[1] == null || b[1] === "" ? "-" : String(b[1]))}</td></tr>`; }).join("")}</table>
+        `);
+    }
+
+    // -----------------------------------------------------------------
     // TAB DATA SAYA — SEMUA data terlihat (agar kalau ada kesalahan bisa
     // diajukan koreksi) + "Ajukan Perubahan Data" (Bagian 13).
     // -----------------------------------------------------------------
@@ -425,16 +607,6 @@
             ]],
         ];
 
-        function blokNilai(judul, str) {
-            const list = parseNilai(str);
-            if (!list.length) return `<div class="bagian-judul" style="margin-top:10px;">${judul}</div><div class="teks-lembut">Tidak diisi.</div>`;
-            const vals = list.map(function (x) { return parseFloat(x[1].replace(",", ".")); }).filter(function (v) { return !isNaN(v); });
-            const tot = vals.reduce(function (a, b) { return a + b; }, 0);
-            return `<div class="bagian-judul" style="margin-top:10px;">${judul}</div>
-                ${list.map(function (x) { return `<div class="baris-info"><span>${UI.escapeHtml(x[0])}</span><span>${UI.escapeHtml(x[1])}</span></div>`; }).join("")}
-                ${vals.length ? `<div class="ringkasan-nilai"><span>Total: <strong>${tot.toFixed(2)}</strong></span><span>Rata-rata: <strong>${(tot / vals.length).toFixed(2)}</strong></span></div>` : ""}`;
-        }
-
         isiTab.innerHTML = `
             <h3>Data Saya</h3>
             ${bagian.map(function (b) {
@@ -443,14 +615,8 @@
                         return `<div class="baris-info"><span>${UI.escapeHtml(r[0])}</span><span>${UI.escapeHtml(r[1] == null || r[1] === "" ? "-" : r[1])}</span></div>`;
                     }).join("")}</div>`;
             }).join("")}
-            <div class="kartu">
-                <div class="bagian-judul">Nilai &amp; Prestasi</div>
-                ${blokNilai("Nilai Rapor", p.NILAI_MAPEL_RAPOR)}
-                ${blokNilai("Nilai TKA", p.NILAI_MAPEL_TKA)}
-                <div class="bagian-judul" style="margin-top:10px;">Prestasi</div>
-                <div class="teks-lembut">${UI.escapeHtml(p.PRESTASI || "Tidak diisi.")}</div>
-            </div>
-            <div class="catatan hijau">${UI.ikon("info")}<span>Ada data yang keliru? Ajukan perubahan di bawah, petugas akan memprosesnya.</span></div>
+            <button type="button" class="tombol blok" id="btnUnduhBukti" style="margin-bottom:12px;">${UI.ikon("unggah")} Unduh Bukti Pendaftaran</button>
+            <div class="catatan hijau">${UI.ikon("info")}<span>Nilai Rapor, TKA, dan Prestasi sekarang ada di tab <strong>Nilai</strong> tersendiri. Ada data lain yang keliru di atas? Ajukan perubahan di bawah, petugas akan memprosesnya.</span></div>
             <button type="button" class="tombol blok" id="btnAjukanUbah" style="margin-top:12px;">Ajukan Perubahan Data</button>
             <div id="formAjukanUbah" style="display:none; margin-top:12px;">
                 <div class="catatan amber">${UI.ikon("info")}<span>Perubahan akan masuk ke antrean petugas, tidak langsung berubah.</span></div>
@@ -462,6 +628,8 @@
                 <button type="button" class="utama blok" id="btnKirimUbah" style="margin-top:12px;">Kirim Pengajuan</button>
             </div>
         `;
+
+        document.getElementById("btnUnduhBukti").addEventListener("click", unduhBuktiPendaftaran);
 
         document.getElementById("btnAjukanUbah").addEventListener("click", function () {
             document.getElementById("formAjukanUbah").style.display = "block";
