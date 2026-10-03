@@ -162,16 +162,27 @@ const API = (() => {
 
         Object.entries(params).forEach(([k, v]) => url.searchParams.append(k, v));
 
-        const response = await fetch(url.toString(), {
-            method: "GET",
-            redirect: "follow",
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Retry SEKALI khusus GET (aman diulang, tidak ada efek samping)
+        // kalau gagal jaringan/5xx/404 — Apps Script Web App kadang
+        // mengalami hiccup transien (redirect script.google.com ->
+        // script.googleusercontent.com, cold start) yang hilang sendiri
+        // kalau dicoba ulang sebentar lagi.
+        for (let percobaan = 0; percobaan < 2; percobaan++) {
+            try {
+                const response = await fetch(url.toString(), { method: "GET", redirect: "follow" });
+                if (!response.ok) {
+                    if (percobaan === 0 && (response.status === 404 || response.status >= 500)) {
+                        await new Promise((r) => setTimeout(r, 800));
+                        continue;
+                    }
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            } catch (err) {
+                if (percobaan === 0) { await new Promise((r) => setTimeout(r, 800)); continue; }
+                throw err;
+            }
         }
-
-        return response.json();
     }
 
     async function _post(body = {}, withAuth = false) {
@@ -184,6 +195,11 @@ const API = (() => {
             body.token = token;
         }
 
+        // POST TIDAK di-retry otomatis (beda dari _get) — mengulang POST
+        // yang sudah terkirim berisiko duplikasi efek samping (mis. dobel
+        // catat pembayaran). submitPendaftaran sudah py idempotency sendiri
+        // (submissionId), tapi action lain belum tentu — lebih aman gagal
+        // sekali & biarkan pengguna coba lagi manual lewat tombol.
         const response = await fetch(APP_CONFIG.apiUrl, {
             method: "POST",
             redirect: "follow",
@@ -365,8 +381,13 @@ const API = (() => {
         return _denganCache("referensiSekolah", function () { return _get({ action: "getReferensiSekolah" }); });
     }
 
-    async function getPengumuman() {
-        return _denganCache("pengumuman", function () { return _get({ action: "getPengumuman" }); }, 5 * 60 * 1000);
+    async function getPengumuman(gelombang) {
+        // SENGAJA TIDAK di-cache (beda dari CONFIG/wilayah/referensi): isinya
+        // jarang berubah tapi HARUS langsung terasa begitu admin menerbitkan
+        // pengumuman baru — sebelumnya cache 5 menit bikin pengumuman baru
+        // seolah "tidak muncul" padahal sudah tersimpan di sheet. Payload-nya
+        // kecil jadi biaya round-trip tambahan ini dapat diabaikan.
+        return _get(gelombang ? { action: "getPengumuman", gelombang } : { action: "getPengumuman" });
     }
 
     // -------------------------------------------------------------------------
@@ -534,6 +555,16 @@ const API = (() => {
         return _post({ action: "adminSelesaikanPengajuan", pengajuanId, statusBaru, catatan: catatan || "" }, true);
     }
 
+    /** [ADMIN] Daftar user petugas/admin (tanpa password/PIN). */
+    async function adminGetUsers() {
+        return _get({ action: "adminGetUsers" }, true);
+    }
+
+    /** [ADMIN] Tambah (userId kosong) / ubah user. password/pin kosong saat ubah = tidak diganti. */
+    async function adminSimpanUser(data) {
+        return _post(Object.assign({ action: "adminSimpanUser" }, data), true);
+    }
+
     /** [ADMIN] Hapus log lebih tua dari 60/90/180 hari. konfirmasi harus "HAPUS". */
     async function adminBersihkanLog(hari, konfirmasi) {
         return _post({ action: "adminBersihkanLog", hari, konfirmasi }, true);
@@ -547,14 +578,15 @@ const API = (() => {
         return hasil;
     }
 
-    async function adminSimpanPengumuman(pengumumanId, judul, isi, aktif, linkWa) {
+    async function adminSimpanPengumuman(pengumumanId, judul, isi, aktif, link, targetGelombang) {
         return _post({
             action: "adminSimpanPengumuman",
             pengumumanId: pengumumanId || "",
             judul,
             isi: isi || "",
             aktif: aktif || "Ya",
-            linkWa: linkWa || "",
+            link: link || "",
+            targetGelombang: targetGelombang || "",
         }, true);
     }
 
@@ -622,6 +654,8 @@ const API = (() => {
         adminSetPotongan,
         adminStatistik,
         adminBersihkanLog,
+        adminGetUsers,
+        adminSimpanUser,
         adminGetPengajuan,
         adminSelesaikanPengajuan,
         adminSimpanPengumuman,

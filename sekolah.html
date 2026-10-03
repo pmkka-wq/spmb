@@ -49,7 +49,7 @@
     let noPendaftaranDetail = null;
     let detailAktif = null;
     let subTabDetail = "diri";
-    let filterPendaftar = { status: "", gelombang: "", cari: "", page: 1 };
+    let filterPendaftar = { status: "", gelombang: "", cari: "", page: 1, urutan: "terbaru" };
 
     // -----------------------------------------------------------------
     // BOOTSTRAP
@@ -265,8 +265,8 @@
 
                 <h3 style="margin:16px 0 8px;">Per Gelombang &amp; Jenis Kelamin</h3>
                 <div class="kartu">
-                    <div class="teks-lembut">${Object.keys(d.perGelombang).map(function (k) { return "Gelombang " + UI.escapeHtml(k) + ": <strong>" + d.perGelombang[k] + "</strong>"; }).join(" · ") || "-"}</div>
-                    <div class="teks-lembut" style="margin-top:4px;">${Object.keys(d.perGender).map(function (k) { return UI.escapeHtml(k) + ": <strong>" + d.perGender[k] + "</strong>"; }).join(" · ") || "-"}</div>
+                    <div class="tag-grup">${Object.keys(d.perGelombang).map(function (k) { return `<span class="tag">Gelombang ${UI.escapeHtml(k)} <strong>${d.perGelombang[k]}</strong></span>`; }).join("") || '<span class="teks-lembut">-</span>'}</div>
+                    <div class="tag-grup" style="margin-top:8px;">${Object.keys(d.perGender).map(function (k) { return `<span class="tag">${UI.escapeHtml(k)} <strong>${d.perGender[k]}</strong></span>`; }).join("") || '<span class="teks-lembut">-</span>'}</div>
                 </div>
 
                 <h3 style="margin:16px 0 8px;">Statistik Nilai Rapor</h3>
@@ -276,6 +276,12 @@
                 <h3 style="margin:16px 0 8px;">Statistik Nilai TKA</h3>
                 <div class="kartu">${barisNilai(d.nilaiTka.perMapel)}
                     ${d.nilaiTka.gabungan ? `<div class="ringkasan-nilai"><span>Rata-rata gabungan siswa — Tertinggi: <strong>${fmtDesimal(d.nilaiTka.gabungan.tertinggi)}</strong></span><span>Terendah: <strong>${fmtDesimal(d.nilaiTka.gabungan.terendah)}</strong></span><span>Rata-rata: <strong>${fmtDesimal(d.nilaiTka.gabungan.rata)}</strong></span></div>` : ""}
+                    ${(d.nilaiTka.top3 && d.nilaiTka.top3.length) ? `
+                        <div class="bagian-judul" style="margin-top:14px;">3 Besar — Total Semua Mapel TKA</div>
+                        ${d.nilaiTka.top3.map(function (s, i) {
+                            return `<div class="baris-info"><span>${i + 1}. ${UI.escapeHtml(s.nama)} <span class="teks-kecil">(${UI.escapeHtml(s.noPendaftaran)})</span></span><span>${fmtDesimal(s.total)}</span></div>`;
+                        }).join("")}
+                    ` : ""}
                 </div>
                 <div class="teks-kecil" style="margin-top:8px;">Diperbarui: ${UI.formatTanggal(d.diperbarui)} (data di-cache maks. 5 menit)</div>
             `;
@@ -347,6 +353,11 @@
             });
         }
         if (!rows.length) { UI.toast("Tidak ada data untuk diekspor."); return; }
+        rows = rows.slice().sort(function (a, b) {
+            const ta = new Date(a.CREATED_AT).getTime() || 0;
+            const tb = new Date(b.CREATED_AT).getTime() || 0;
+            return filterPendaftar.urutan === "terlama" ? ta - tb : tb - ta;
+        });
         const kolom = ["NO_PENDAFTARAN", "NAMA_LENGKAP", "NISN", "JENIS_KELAMIN", "ASAL_SEKOLAH", "NO_HP", "KELAS_PEMINATAN", "BOARDING", "GELOMBANG", "STATUS_PENDAFTARAN"];
         const esc = function (v) { const s = String(v == null ? "" : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
         const csv = [kolom.join(",")].concat(rows.map(function (r) { return kolom.map(function (k) { return esc(r[k]); }).join(","); })).join("\r\n");
@@ -376,9 +387,12 @@
                     <input type="text" id="fFilterCari" value="${UI.escapeHtml(filterPendaftar.cari)}" placeholder="Ketik untuk cari instan...">
                 </div>
             </div>
-            <div style="display:flex; justify-content:flex-end; gap:8px;">
-                <button type="button" id="btnEksporCsv" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("unggah")} Ekspor CSV</button>
-                <button type="button" id="btnRefreshPendaftar" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("jam")} Perbarui Data</button>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                <button type="button" id="btnUrutkan" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("jam")} ${filterPendaftar.urutan === "terbaru" ? "Terbaru Dulu" : "Terlama Dulu"}</button>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" id="btnEksporCsv" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("unggah")} Ekspor CSV</button>
+                    <button type="button" id="btnRefreshPendaftar" style="padding:6px 10px; font-size:0.7rem;">${UI.ikon("jam")} Perbarui Data</button>
+                </div>
             </div>
             <div id="daftarPendaftarTabel"><div class="pemuat"><div class="spinner"></div>Memuat data…</div></div>
         `;
@@ -389,6 +403,12 @@
             filterPendaftar.cari = e.target.value.trim().toLowerCase();
             filterPendaftar.page = 1;
             gambarTabelDariMemori();
+        });
+        document.getElementById("btnUrutkan").addEventListener("click", function (e) {
+            filterPendaftar.urutan = filterPendaftar.urutan === "terbaru" ? "terlama" : "terbaru";
+            filterPendaftar.page = 1;
+            e.currentTarget.innerHTML = UI.ikon("jam") + " " + (filterPendaftar.urutan === "terbaru" ? "Terbaru Dulu" : "Terlama Dulu");
+            gambarTabelDariMemori(); // data sudah di memori, tidak perlu fetch ulang
         });
         document.getElementById("btnEksporCsv").addEventListener("click", eksporPendaftarCsv);
         document.getElementById("btnRefreshPendaftar").addEventListener("click", function (e) {
@@ -426,6 +446,11 @@
                     || String(r.ASAL_SEKOLAH || "").toLowerCase().indexOf(q) !== -1;
             });
         }
+        rows = rows.slice().sort(function (a, b) {
+            const ta = new Date(a.CREATED_AT).getTime() || 0;
+            const tb = new Date(b.CREATED_AT).getTime() || 0;
+            return filterPendaftar.urutan === "terlama" ? ta - tb : tb - ta;
+        });
         const total = rows.length;
         const pageSize = 20;
         const totalPages = Math.max(Math.ceil(total / pageSize), 1);
@@ -506,7 +531,7 @@
         detailAktif = detail;
         const p = detail.pendaftar;
         const templateWA = cfgPublik.WA_TEMPLATE_HUBUNGI_PENDAFTAR || "Assalamu'alaikum bapak/ibu calon wali siswa dari {nama_pendaftar} dengan nomor pendaftaran {no_pendaftaran}.";
-        const pesanWA = UI.isiTemplate(templateWA, { nama_pendaftar: p.NAMA_LENGKAP, no_pendaftaran: p.NO_PENDAFTARAN });
+        const pesanWA = UI.isiTemplate(templateWA, { nama_pendaftar: p.NAMA_LENGKAP, no_pendaftaran: p.NO_PENDAFTARAN, kelas_peminatan: p.KELAS_PEMINATAN || "-" });
 
         isiTab.innerHTML = `
             <button type="button" class="tombol teks" id="btnKembaliList" style="padding-left:0;">${UI.ikon("panahKiri")} Kembali ke Daftar</button>
@@ -691,17 +716,18 @@
             return vals.length + " nilai, total " + tot.toFixed(2) + ", rata-rata " + (tot / vals.length).toFixed(2);
         }
         const baris = [
-            ["Nama Lengkap", p.NAMA_LENGKAP], ["NISN", p.NISN], ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR],
-            ["Asal Sekolah", p.ASAL_SEKOLAH], ["No. Pendaftaran", p.NO_PENDAFTARAN], ["Status", labelStatus(p.STATUS_PENDAFTARAN)],
+            ["NISN", p.NISN], ["No. Pendaftaran", p.NO_PENDAFTARAN], ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR],
+            ["Asal Sekolah", p.ASAL_SEKOLAH], ["Status", labelStatus(p.STATUS_PENDAFTARAN)],
             ["Kelas Peminatan", p.KELAS_PEMINATAN], ["Program", p.BOARDING === "Ya" ? "Boarding" : "Non-Boarding"], ["Gelombang", p.GELOMBANG],
             ["Nilai Rapor", statNilai(p.NILAI_MAPEL_RAPOR)], ["Nilai TKA", statNilai(p.NILAI_MAPEL_TKA)],
-            ["No. HP", p.NO_HP], ["Alamat", p.ALAMAT],
+            ["No. HP", p.NO_HP], ["Alamat", UI.tampilAlamat(p.ALAMAT)],
         ];
-        UI.cetakHalaman("Info Pendaftar - " + p.NAMA_LENGKAP, `
-            <h1>${UI.escapeHtml(p.NAMA_LENGKAP)}</h1>
-            <div class="sub">${UI.escapeHtml(cfgPublik.NAMA_SEKOLAH || "")} — SPMB ${UI.escapeHtml(cfgPublik.TAHUN_AJARAN || "")}</div>
-            <table>${baris.map(function (b) { return `<tr><td>${UI.escapeHtml(b[0])}</td><td>${UI.escapeHtml(b[1] == null || b[1] === "" ? "-" : String(b[1]))}</td></tr>`; }).join("")}</table>
-        `);
+        UI.cetakHalaman(
+            "Info Pendaftar - " + p.NAMA_LENGKAP,
+            `<div style="text-align:center; font-size:1.25rem; font-weight:800; margin-bottom:18px;">${UI.escapeHtml(p.NAMA_LENGKAP)}</div>
+            <table>${baris.map(function (b) { return `<tr><td>${UI.escapeHtml(b[0])}</td><td>${UI.escapeHtml(b[1] == null || b[1] === "" ? "-" : String(b[1]))}</td></tr>`; }).join("")}</table>`,
+            { judulDok: "INFO PENDAFTAR", subJudul1: "SPMB TA " + (cfgPublik.TAHUN_AJARAN || "-"), subJudul2: (cfgPublik.NAMA_SEKOLAH || "").toUpperCase() }
+        );
     }
 
     function renderSubDataDiri(detail, wadah) {
@@ -767,16 +793,21 @@
                 const k = el.getAttribute("data-k");
                 if (String(el.value).trim() !== String(p[k] == null ? "" : p[k]).trim()) payload[k] = el.value.trim();
             });
-            ["NILAI_MAPEL_RAPOR", "NILAI_MAPEL_TKA"].forEach(function (kol) {
+            // Rapor skala 0-100 (Bagian 3 poin 11). TKA memakai SKOR
+            // per mapel (bukan gabungan semua mapel), tiap mapel bisa sampai
+            // 1000, BUKAN 100 (bug lama: dua kolom ini sempat dicek pakai
+            // batas yang sama).
+            [["NILAI_MAPEL_RAPOR", 100], ["NILAI_MAPEL_TKA", 1000]].forEach(function (pasanganKol) {
+                const kol = pasanganKol[0], maksNilai = pasanganKol[1];
                 const pasangan = [];
                 let salah = false;
                 wadah.querySelectorAll('[data-nilai="' + kol + '"]').forEach(function (el) {
                     const v = el.value.trim().replace(",", ".");
                     if (!v) return;
-                    if (isNaN(parseFloat(v)) || parseFloat(v) < 0 || parseFloat(v) > 100) salah = true;
+                    if (isNaN(parseFloat(v)) || parseFloat(v) < 0 || parseFloat(v) > maksNilai) salah = true;
                     pasangan.push(el.getAttribute("data-mapel") + ":" + v);
                 });
-                if (salah) { errorBox.textContent = "Nilai harus angka 0-100 (pakai titik untuk desimal)."; errorBox.classList.add("tampil"); payload.__salah = true; return; }
+                if (salah) { errorBox.textContent = "Nilai " + (kol === "NILAI_MAPEL_TKA" ? "TKA harus angka 0-1000" : "Rapor harus angka 0-100") + " (pakai titik untuk desimal)."; errorBox.classList.add("tampil"); payload.__salah = true; return; }
                 const baru = pasangan.join(",");
                 if (baru !== String(p[kol] || "")) payload[kol] = baru;
             });
@@ -792,7 +823,10 @@
             try {
                 const res = await API.updateProfile(payload);
                 if (!res.ok) throw new Error(res.pesan);
-                UI.toast("Data pendaftar berhasil diperbarui.");
+                // Sebutkan field apa saja yang berubah -- toast generik
+                // "berhasil diperbarui" tidak menjelaskan apa-apa.
+                const daftarField = Object.keys(payload).filter(function (k) { return k !== "noPendaftaran" && k !== "alasanPindahKelas"; });
+                UI.toast("Tersimpan: " + daftarField.join(", ") + ".");
                 renderDetail(true);
             } catch (err) {
                 errorBox.textContent = err.message || "Gagal menyimpan.";
@@ -907,10 +941,11 @@
 
             <div class="kartu">
                 <div class="bagian-judul">Potongan Biaya</div>
-                <p class="teks-lembut" style="margin:0 0 8px;">Isi nominal POSITIF (mis. 300000). Isi 0 untuk menghapus potongan. Untuk gratis penuh isi sebesar biaya pendaftaran.</p>
+                ${rb.potongan ? `<div class="baris-info"><span>Potongan saat ini</span><span>${UI.formatRupiah(rb.potongan)}${rb.keteranganPotongan ? " — " + UI.escapeHtml(rb.keteranganPotongan) : ""}</span></div>` : '<p class="teks-lembut" style="margin:0 0 8px;">Belum ada potongan untuk pendaftar ini.</p>'}
+                <p class="teks-lembut" style="margin:8px 0;">Isi nominal POSITIF untuk mengganti potongan di atas (kosongkan/isi 0 untuk menghapusnya). Maksimal sebesar biaya pendaftaran (${UI.formatRupiah(rb.biaya)}).</p>
                 <div class="grid-2">
-                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Nominal Potongan</label><input type="text" inputmode="numeric" id="fPotongan" value="${rb.potongan || ""}"></div>
-                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Keterangan</label><input type="text" id="fKetPotongan" value="${UI.escapeHtml(rb.keteranganPotongan || "")}" placeholder="Beasiswa / Anak Guru / Anak Panti / Gel. 1"></div>
+                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Nominal Potongan Baru</label><input type="number" inputmode="numeric" id="fPotongan" value="" min="0" max="${rb.biaya}" placeholder="0"></div>
+                    <div class="field"><label style="margin-top:0; font-size:0.72rem;">Keterangan</label><input type="text" id="fKetPotongan" value="" placeholder="Beasiswa / Anak Guru / Anak Panti / Gel. 1"></div>
                 </div>
                 <div class="pesan-error-umum" id="errorPotongan"></div>
                 <button type="button" class="blok" id="btnSimpanPotongan" style="margin-top:8px;">Simpan Potongan</button>
@@ -1038,10 +1073,13 @@
                 <div class="catatan amber">${UI.ikon("info")}<span>Daftar ini hanya menampilkan pengumuman yang sedang aktif (backend belum punya endpoint untuk melihat yang nonaktif).</span></div>
                 ${rows.length === 0 ? '<div class="kartu teks-lembut" style="text-align:center;">Belum ada pengumuman aktif.</div>' :
                     rows.map(function (r) {
-                        return `<div class="kartu" data-id="${UI.escapeHtml(r.PENGUMUMAN_ID)}" data-judul="${UI.escapeHtml(r.JUDUL)}" data-isi="${UI.escapeHtml(r.ISI || "")}" data-link-wa="${UI.escapeHtml(r.LINK_WA || "")}">
-                            <div style="font-weight:800;">${UI.escapeHtml(r.JUDUL)}</div>
+                        return `<div class="kartu" data-id="${UI.escapeHtml(r.PENGUMUMAN_ID)}" data-judul="${UI.escapeHtml(r.JUDUL)}" data-isi="${UI.escapeHtml(r.ISI || "")}" data-link="${UI.escapeHtml(r.LINK_WA || "")}" data-target="${UI.escapeHtml(r.TARGET_GELOMBANG || "")}">
+                            <div style="display:flex; justify-content:space-between; gap:8px;">
+                                <div style="font-weight:800;">${UI.escapeHtml(r.JUDUL)}</div>
+                                ${r.TARGET_GELOMBANG ? `<span class="badge biru">Gel. ${UI.escapeHtml(r.TARGET_GELOMBANG)}</span>` : `<span class="badge abu">Semua</span>`}
+                            </div>
                             <p class="teks-lembut" style="margin:4px 0;">${UI.escapeHtml(r.ISI || "")}</p>
-                            ${r.LINK_WA ? `<a href="${UI.escapeHtml(r.LINK_WA)}" target="_blank" rel="noreferrer" class="tombol teks" style="padding-left:0;">${UI.ikon("wa")} Link WA terlampir</a>` : ""}
+                            ${r.LINK_WA ? `<a href="${UI.escapeHtml(r.LINK_WA)}" target="_blank" rel="noreferrer" class="tombol teks" style="padding-left:0;">${UI.ikon("panah")} Buka Link</a>` : ""}
                             <div style="display:flex; gap:8px; margin-top:8px;">
                                 <button type="button" class="tombol teks" data-aksi-edit style="padding-left:0;">Edit</button>
                                 <button type="button" class="tombol teks" data-aksi-nonaktif style="padding-left:0; color:var(--merah);">Nonaktifkan</button>
@@ -1050,7 +1088,7 @@
                     }).join("")}
             `;
 
-            document.getElementById("btnBuatPengumuman").addEventListener("click", function () { bukaFormPengumuman(null, "", ""); });
+            document.getElementById("btnBuatPengumuman").addEventListener("click", function () { bukaFormPengumuman(null, "", "", "", ""); });
             wadahEventPengumuman();
         } catch (err) {
             isiTab.innerHTML = '<div class="pesan-error-umum tampil">Error jaringan: ' + UI.escapeHtml(err.message) + '</div>';
@@ -1061,7 +1099,7 @@
         document.querySelectorAll("[data-aksi-edit]").forEach(function (btn) {
             btn.addEventListener("click", function () {
                 const kartu = btn.closest("[data-id]");
-                bukaFormPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"), kartu.getAttribute("data-link-wa"));
+                bukaFormPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"), kartu.getAttribute("data-link"), kartu.getAttribute("data-target"));
             });
         });
         document.querySelectorAll("[data-aksi-nonaktif]").forEach(function (btn) {
@@ -1069,7 +1107,7 @@
                 const kartu = btn.closest("[data-id]");
                 if (!confirm("Nonaktifkan pengumuman ini?")) return;
                 try {
-                    const res = await API.adminSimpanPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"), "Tidak", kartu.getAttribute("data-link-wa"));
+                    const res = await API.adminSimpanPengumuman(kartu.getAttribute("data-id"), kartu.getAttribute("data-judul"), kartu.getAttribute("data-isi"), "Tidak", kartu.getAttribute("data-link"), kartu.getAttribute("data-target"));
                     if (!res.ok) throw new Error(res.pesan);
                     UI.toast("Pengumuman dinonaktifkan.");
                     renderPengumuman();
@@ -1078,17 +1116,20 @@
         });
     }
 
-    function bukaFormPengumuman(id, judul, isi, linkWa) {
+    function bukaFormPengumuman(id, judul, isi, link, targetGelombang) {
         const wadah = document.getElementById("formPengumuman");
         wadah.style.display = "block";
+        const opsiTarget = [["", "Semua Gelombang"], ["1", "Gelombang 1"], ["2", "Gelombang 2"], ["3", "Gelombang 3"], ["Khusus", "Gelombang Khusus"]];
         wadah.innerHTML = `
             <div class="kartu">
                 <label style="margin-top:0;">Judul</label>
                 <input type="text" id="fJudulPengumuman" value="${UI.escapeHtml(judul)}">
                 <label>Isi</label>
                 <textarea id="fIsiPengumuman" rows="3">${UI.escapeHtml(isi)}</textarea>
-                <label>Link WhatsApp <span class="opsional">(opsional — buat dulu di wa.me, contoh: https://wa.me/6281xxxx?text=Assalamu%27alaikum...)</span></label>
-                <input type="text" id="fLinkWaPengumuman" value="${UI.escapeHtml(linkWa || "")}" placeholder="https://wa.me/6281...">
+                <label>Link <span class="opsional">(opsional — link apa saja: grup WA, formulir, web sekolah, dll)</span></label>
+                <input type="text" id="fLinkPengumuman" value="${UI.escapeHtml(link || "")}" placeholder="https://...">
+                <label>Ditujukan untuk <span class="opsional">(biarkan "Semua" kalau tidak perlu dipilah)</span></label>
+                <select id="fTargetPengumuman">${opsiTarget.map(function (o) { return `<option value="${o[0]}" ${o[0] === (targetGelombang || "") ? "selected" : ""}>${o[1]}</option>`; }).join("")}</select>
                 <div class="pesan-error-umum" id="errorPengumuman"></div>
                 <button type="button" class="utama blok" id="btnSimpanPengumuman" style="margin-top:10px;">Simpan</button>
             </div>
@@ -1096,15 +1137,16 @@
         document.getElementById("btnSimpanPengumuman").addEventListener("click", async function () {
             const j = document.getElementById("fJudulPengumuman").value.trim();
             const i = document.getElementById("fIsiPengumuman").value.trim();
-            const lw = document.getElementById("fLinkWaPengumuman").value.trim();
+            const lk = document.getElementById("fLinkPengumuman").value.trim();
+            const tg = document.getElementById("fTargetPengumuman").value;
             const errorBox = document.getElementById("errorPengumuman");
             errorBox.classList.remove("tampil");
             if (!j) { errorBox.textContent = "Judul wajib diisi."; errorBox.classList.add("tampil"); return; }
-            if (lw && lw.indexOf("https://wa.me/") !== 0) { errorBox.textContent = "Link WA harus diawali https://wa.me/"; errorBox.classList.add("tampil"); return; }
+            if (lk && lk.indexOf("https://") !== 0) { errorBox.textContent = "Link harus diawali https://"; errorBox.classList.add("tampil"); return; }
             const btn = document.getElementById("btnSimpanPengumuman");
             btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
             try {
-                const res = await API.adminSimpanPengumuman(id, j, i, "Ya", lw);
+                const res = await API.adminSimpanPengumuman(id, j, i, "Ya", lk, tg);
                 if (!res.ok) throw new Error(res.pesan);
                 UI.toast("Pengumuman tersimpan.");
                 renderPengumuman();
@@ -1138,9 +1180,9 @@
             BIAYA_PENDAFTARAN_P: 'Angka saja tanpa titik/Rp, contoh: 1800000. Biaya pendaftaran untuk JENIS_KELAMIN diawali "Perempuan".',
             BIAYA_DP_MIN: 'Angka saja, contoh: 100000. Minimal DP yang disarankan (tidak memblokir submit kalau kurang).',
             KELAS_PEMINATAN_LIST: 'Daftar kelas dipisah koma, TANPA spasi setelah koma, contoh: Reguler,Tahfidz,Unggulan.',
-            WA_TEMPLATE_HUBUNGI_PENDAFTAR: 'Teks pesan WA ke pendaftar. Boleh pakai {nama_pendaftar} dan {no_pendaftaran}, otomatis diganti.',
+            WA_TEMPLATE_HUBUNGI_PENDAFTAR: 'Teks pesan WA ke pendaftar. Boleh pakai {nama_pendaftar}, {no_pendaftaran}, {kelas_peminatan} — huruf besar/kecil sama saja, otomatis diganti.',
             JENIS_DOKUMEN_OPSIONAL: 'Daftar jenis dokumen TAMBAHAN dipisah koma (selain yang wajib), contoh: BUKTI_PRESTASI.',
-            REKENING_1: 'Teks bebas nomor rekening tujuan DP, contoh: BSI 7123456789 a.n. SMP Muhammadiyah 2 Cilacap. Kosongkan kalau belum ada.',
+            REKENING_1: 'Format WAJIB: nama_bank,no_rek,atas_nama (dipisah koma, tanpa spasi di no_rek). Contoh: BANK MANDIRI,111222333555,Sinta Malihah. Hanya no_rek yang tersalin otomatis. Kosongkan kalau belum ada.',
             REKENING_2: 'Rekening alternatif kedua (opsional), format sama seperti REKENING_1.',
             ADMIN_WA_1_NAMA: 'Nama admin yang tampil di tombol WA, contoh: Admin SPMB.',
             ADMIN_WA_1_NOMOR: 'WAJIB format 628xxxxxxxxxx (awali 62, BUKAN 0) — kalau diawali 0 tombol WA tidak akan berfungsi.',
@@ -1153,16 +1195,12 @@
         };
         isiTab.innerHTML = `
             <div class="kartu">
-                <div class="bagian-judul">Cara Menambah Akun Petugas/Admin</div>
-                <p class="teks-lembut" style="margin:0 0 6px;">Buka sheet <strong>USERS</strong> di Spreadsheet langsung (belum ada menu Kelola User di dashboard ini), isi 1 baris per orang:</p>
-                <div class="baris-info"><span>USER_ID</span><span>Bebas, unik, mis. inisial</span></div>
-                <div class="baris-info"><span>NAMA</span><span>Nama lengkap</span></div>
-                <div class="baris-info"><span>EMAIL</span><span>Wajib unik, dipakai login</span></div>
-                <div class="baris-info"><span>PASSWORD</span><span>Bebas (tersimpan apa adanya, TIDAK di-hash)</span></div>
-                <div class="baris-info"><span>PIN</span><span>6 digit angka</span></div>
-                <div class="baris-info"><span>ROLE</span><span>HARUS persis huruf kecil: admin / petugas</span></div>
-                <div class="baris-info"><span>STATUS_AKTIF</span><span>HARUS persis: Ya</span></div>
-                <p class="teks-lembut" style="margin:8px 0 0;">Kesalahan paling umum: ROLE ditulis "Admin"/"Petugas" (huruf besar) atau STATUS_AKTIF bukan "Ya" persis — login akan selalu gagal meski data lain benar.</p>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <div class="bagian-judul" style="margin:0;">Kelola User (Petugas/Admin)</div>
+                    <button type="button" class="utama" id="btnTambahUser" style="padding:6px 12px; font-size:0.78rem;">+ Tambah</button>
+                </div>
+                <div id="daftarUser" class="teks-lembut" style="margin-top:10px;">Memuat…</div>
+                <p class="teks-kecil" style="margin:8px 0 0;">Password &amp; PIN tidak pernah ditampilkan; saat mengubah, kosongkan untuk tidak mengganti. User yang dinonaktifkan tidak bisa login baru (sesi yang sudah berjalan berakhir maksimal 6 jam).</p>
             </div>
             <div class="catatan amber">${UI.ikon("info")}<span>Hanya key CONFIG umum yang ditampilkan di sini. Key rahasia (SELF_CHECK_KEY, DRIVE_*_FOLDER_ID) sengaja tidak bisa diedit lewat dashboard — ubah langsung dari Google Sheet CONFIG kalau perlu.</span></div>
             <div class="kartu">
@@ -1205,6 +1243,68 @@
                 btn.disabled = false; btn.textContent = teksAsal;
             });
         });
+        async function muatUser() {
+            const box = document.getElementById("daftarUser");
+            try {
+                const res = await API.adminGetUsers();
+                if (!res.ok) throw new Error(res.pesan);
+                const users = res.data.users || [];
+                box.innerHTML = users.length ? users.map(function (u) {
+                    return `<div class="baris-info" style="align-items:center; gap:8px;">
+                        <span style="flex:1; min-width:0;"><strong>${UI.escapeHtml(u.nama)}</strong><br><span class="teks-kecil">${UI.escapeHtml(u.email)} · ${UI.escapeHtml(u.role)}</span></span>
+                        <span class="badge ${u.statusAktif === "Ya" ? "hijau" : "amber"}">${u.statusAktif === "Ya" ? "Aktif" : "Nonaktif"}</span>
+                        <button type="button" data-edit-user="${UI.escapeHtml(u.userId)}" style="padding:4px 10px; font-size:0.72rem;">Ubah</button>
+                    </div>`;
+                }).join("") : "Belum ada user.";
+                box.querySelectorAll("[data-edit-user]").forEach(function (btn) {
+                    btn.addEventListener("click", function () {
+                        bukaFormUser(users.filter(function (u) { return u.userId === btn.getAttribute("data-edit-user"); })[0]);
+                    });
+                });
+            } catch (err) { box.textContent = err.message || "Gagal memuat user."; }
+        }
+        function bukaFormUser(u) {
+            const baru = !u; u = u || { userId: "", nama: "", email: "", role: "petugas", statusAktif: "Ya" };
+            const latar = document.createElement("div");
+            latar.className = "modal-latar";
+            latar.innerHTML = `<div class="modal-kotak">
+                <h3 style="margin:0 0 8px;">${baru ? "Tambah User" : "Ubah User"}</h3>
+                <label style="margin-top:0;">Nama</label><input type="text" id="uNama" value="${UI.escapeHtml(u.nama)}">
+                <label>Email (dipakai login)</label><input type="text" id="uEmail" value="${UI.escapeHtml(u.email)}" autocomplete="off">
+                <label>Password ${baru ? "(min. 6 karakter)" : "(kosongkan = tidak diganti)"}</label><input type="text" id="uPassword" autocomplete="off">
+                <label>PIN 6 digit ${baru ? "" : "(kosongkan = tidak diganti)"}</label><input type="text" id="uPin" inputmode="numeric" maxlength="6" autocomplete="off">
+                <label>Role</label><select id="uRole"><option value="petugas">petugas</option><option value="admin">admin</option></select>
+                <label>Status</label><select id="uStatus"><option value="Ya">Aktif</option><option value="Tidak">Nonaktif</option></select>
+                <div class="pesan-error-umum" id="uError"></div>
+                <div style="display:flex; gap:8px; margin-top:14px;">
+                    <button type="button" id="uBatal" style="flex:1;">Batal</button>
+                    <button type="button" class="utama" id="uSimpan" style="flex:1;">Simpan</button>
+                </div></div>`;
+            document.body.appendChild(latar);
+            latar.querySelector("#uRole").value = u.role; latar.querySelector("#uStatus").value = u.statusAktif;
+            latar.querySelector("#uBatal").addEventListener("click", function () { latar.remove(); });
+            latar.querySelector("#uSimpan").addEventListener("click", async function () {
+                const eb = latar.querySelector("#uError"); eb.classList.remove("tampil");
+                const btn = latar.querySelector("#uSimpan");
+                btn.disabled = true; btn.innerHTML = UI.ikon("spinner") + " Menyimpan…";
+                try {
+                    const res = await API.adminSimpanUser({
+                        userId: u.userId,
+                        nama: latar.querySelector("#uNama").value, email: latar.querySelector("#uEmail").value,
+                        password: latar.querySelector("#uPassword").value, pin: latar.querySelector("#uPin").value,
+                        role: latar.querySelector("#uRole").value, statusAktif: latar.querySelector("#uStatus").value,
+                    });
+                    if (!res.ok) throw new Error(res.pesan);
+                    UI.toast(res.pesan); latar.remove(); muatUser();
+                } catch (err) {
+                    eb.textContent = err.message || "Gagal menyimpan."; eb.classList.add("tampil");
+                    btn.disabled = false; btn.textContent = "Simpan";
+                }
+            });
+        }
+        document.getElementById("btnTambahUser").addEventListener("click", function () { bukaFormUser(null); });
+        muatUser();
+
         const selKey = document.getElementById("fPilihKey");
         function isiNilaiSekarang() {
             document.getElementById("fNilaiSekarang").value = cfgPublik[selKey.value] || "(kosong)";

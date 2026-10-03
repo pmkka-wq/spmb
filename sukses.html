@@ -121,7 +121,9 @@
             [cfgPublik.ADMIN_WA_2_NAMA, cfgPublik.ADMIN_WA_2_NOMOR],
         ].filter(function (x) { return x[1]; });
         if (!daftar.length) return "";
-        const pesan = "Assalamu'alaikum, saya " + (akun.namaLengkap || "calon siswa") + " (No. Pendaftaran " + akun.noPendaftaran + ") sudah mendaftar SPMB dan ingin konfirmasi.";
+        const pesan = "Assalamu'alaikum, saya " + (akun.namaLengkap || "calon siswa")
+            + (akun.asalSekolah ? " dari " + akun.asalSekolah : "")
+            + " (No. Pendaftaran " + akun.noPendaftaran + ") sudah selesai mendaftar dan ingin konfirmasi DP.";
         return `<h3 style="margin-top:18px;">Hubungi Admin</h3>
             <p class="teks-lembut" style="margin-top:-4px;">Ada pertanyaan atau ingin konfirmasi DP? Hubungi admin berikut via WhatsApp.</p>
             <div style="display:grid; gap:8px;">${daftar.map(function (x, i) {

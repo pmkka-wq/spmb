@@ -401,7 +401,9 @@
         }
 
         const alamatGabungan = [jalan, desaFinal, kecamatanNamaFinal, kabupaten, kodePos].join("; ");
-        const tempatTglLahirGabungan = tempatLahir + ", " + tanggalLahir;
+        // "2012-01-15" (dari <input type="date">) -> "15 Januari 2012" supaya
+        // tersimpan dalam format yang enak dibaca, bukan format ISO mentah.
+        const tempatTglLahirGabungan = tempatLahir + ", " + UI.formatTanggal(tanggalLahir);
 
         draft = Object.assign(draft, {
             namaLengkap: namaLengkap,
@@ -782,19 +784,26 @@
 
         if (!kelasTerpilih) kesalahan.push("Kelas peminatan wajib dipilih.");
 
-        const kumpulkanNilai = function (selektor, batasNama) {
+        // Rapor skala 0-100 per mapel. TKA memakai SKOR per mapel (bukan
+        // gabungan semua mapel) yang bisa sampai 1000 per mapel — JANGAN
+        // disamakan batasnya.
+        const kumpulkanNilai = function (selektor, batasNama, nilaiMaks) {
             const hasil = []; const peringatan = [];
             document.querySelectorAll(selektor).forEach(function (el) {
                 const nilai = el.value.trim();
                 if (!nilai) return;
-                if (!/^\d{1,3}(\.\d+)?$/.test(nilai)) { peringatan.push(batasNama + " " + el.getAttribute(batasNama === "Rapor" ? "data-mapel-rapor" : "data-mapel-tka") + " harus angka (titik untuk desimal, bukan koma)."); return; }
-                const mapel = el.getAttribute(batasNama === "Rapor" ? "data-mapel-rapor" : "data-mapel-tka");
+                const atribut = batasNama === "Rapor" ? "data-mapel-rapor" : "data-mapel-tka";
+                if (!/^\d{1,4}(\.\d+)?$/.test(nilai) || parseFloat(nilai) > nilaiMaks || parseFloat(nilai) < 0) {
+                    peringatan.push(batasNama + " " + el.getAttribute(atribut) + " harus angka 0-" + nilaiMaks + " (titik untuk desimal, bukan koma).");
+                    return;
+                }
+                const mapel = el.getAttribute(atribut);
                 hasil.push(mapel + ":" + nilai);
             });
             return { csv: hasil.join(","), peringatan: peringatan };
         };
-        const rapor = kumpulkanNilai("[data-mapel-rapor]", "Rapor");
-        const tka = kumpulkanNilai("[data-mapel-tka]", "TKA");
+        const rapor = kumpulkanNilai("[data-mapel-rapor]", "Rapor", 100);
+        const tka = kumpulkanNilai("[data-mapel-tka]", "TKA", 1000);
         kesalahan.push(...rapor.peringatan, ...tka.peringatan);
 
         if (kesalahan.length) {
@@ -821,15 +830,6 @@
     // -----------------------------------------------------------------
     // STEP 4 — RINGKASAN & KIRIM (Bagian 3 poin 5,6 & 9)
     // -----------------------------------------------------------------
-    /** Satu baris rekening + tombol salin (menyalin nomor rekening saja, bukan seluruh teks). */
-    function htmlBarisRekening(teks) {
-        const r = UI.uraikanRekening(teks);
-        return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px;">
-            <div style="font-weight:800; color:#fff;">${UI.escapeHtml(teks)}</div>
-            <button type="button" data-salin-rekening="${UI.escapeHtml(r.nomor)}" style="flex-shrink:0; padding:6px 9px; background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.25); color:#fff; font-size:0.68rem; border-radius:8px;">${UI.ikon("salin")} Salin</button>
-        </div>`;
-    }
-
     function htmlStep4() {
         const d = draft;
         const biayaDpMin = cfgPublik.BIAYA_DP_MIN || "0";
@@ -842,7 +842,7 @@
                 <div style="font-weight:800; margin-top:2px;">${UI.escapeHtml(d.namaLengkap || "-")}</div>
                 <div class="teks-lembut">NISN ${UI.escapeHtml(d.nisn || "-")} · ${UI.escapeHtml(d.jenisKelamin || "-")}</div>
                 <div class="teks-lembut">Asal Sekolah: ${UI.escapeHtml(d.asalSekolah || "-")}</div>
-                <div class="teks-lembut">${UI.escapeHtml(d.alamat || "-")}</div>
+                <div class="teks-lembut">${UI.escapeHtml(UI.tampilAlamat(d.alamat) || "-")}</div>
             </div>
 
             <div class="kartu" style="position:relative;">
@@ -865,10 +865,13 @@
                 <div class="nilai-besar" style="font-size:1.05rem; margin-top:6px;">Silakan lakukan DP minimal ${UI.formatRupiah(biayaDpMin)}</div>
                 ${(cfgPublik.REKENING_1 || cfgPublik.REKENING_2) ? `
                     <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">Transfer ke nomor rekening:</div>
-                    ${[cfgPublik.REKENING_1, cfgPublik.REKENING_2].filter(Boolean).map(htmlBarisRekening).join("")}
+                    ${[cfgPublik.REKENING_1, cfgPublik.REKENING_2].filter(Boolean).map(UI.htmlRekening).join("")}
                 ` : ""}
                 <div class="teks-lembut" style="color:#cbd5c8; margin-top:10px;">Amankan kelas pilihanmu sekarang juga dengan membayar DP minimal — bisa dibayar &amp; diupload buktinya kapan saja dari Dashboard Pendaftar setelah mendaftar.</div>
-                ${cfgPublik.ADMIN_WA_1_NOMOR ? `<a class="tombol tombol-wa blok" style="margin-top:12px;" target="_blank" rel="noreferrer" href="${UI.linkWA(cfgPublik.ADMIN_WA_1_NOMOR, cfgPublik.ADMIN_WA_1_NAMA, "Halo, saya sudah selesai mendaftar dan ingin konfirmasi DP.")}">${UI.ikon("wa")} Hubungi Admin Setelah Pendaftaran Selesai</a>` : ""}
+                <!-- Tombol WA sengaja TIDAK ada di sini: pendaftaran belum terkirim
+                     di titik ini jadi "konfirmasi DP" di sini membingungkan (belum
+                     ada apa pun untuk dikonfirmasi) -- kontak admin sudah tersedia
+                     setelah submit berhasil, di halaman sukses.html. -->
             </div>
 
             <label style="display:flex; align-items:flex-start; gap:8px; font-weight:500; font-size:0.82rem; margin-top:16px;">
@@ -887,7 +890,7 @@
 
     function setupStep4() {
         document.querySelectorAll("[data-salin-rekening]").forEach(function (btn) {
-            btn.addEventListener("click", function () { UI.salin(btn.getAttribute("data-salin-rekening"), "Nomor rekening tersalin."); });
+            btn.addEventListener("click", function () { UI.salin(btn.getAttribute("data-salin-rekening").replace(/\D/g, ""), "Nomor rekening tersalin."); });
         });
         document.querySelectorAll("[data-ubah]").forEach(function (el) {
             el.addEventListener("click", function () {
@@ -937,6 +940,7 @@
                 pin: res.data.pin,
                 noHp: draft.noHp,
                 namaLengkap: draft.namaLengkap,
+                asalSekolah: draft.asalSekolah,
             }));
             hapusDraft();
             window.location.href = "sukses.html";

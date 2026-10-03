@@ -349,6 +349,9 @@ button.gelap { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255
 /* Ikon spinner inline (UI.ikon("spinner")) dipakai di SEMUA tombol proses —
    tanpa aturan ini ikon tampil diam/statis meski tombol sedang loading. */
 .ikon-spin { display: inline-block; animation: putar 0.8s linear infinite; vertical-align: -2px; }
+.tag-grup { display: flex; gap: 8px; flex-wrap: wrap; }
+.tag { display: inline-flex; align-items: center; gap: 4px; background: var(--hijau-50, #eef6f0); color: var(--hijau-700); border: 1px solid var(--hijau-100); border-radius: 999px; padding: 5px 12px; font-size: 0.76rem; }
+.tag strong { color: var(--hijau-700); }
 .ringkasan-nilai { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; padding: 10px 12px; background: var(--krem-100, #f6f3ec); border-radius: 10px; font-size: 0.78rem; }
 .ringkasan-nilai strong { color: var(--hijau-700); }
 button:disabled, .tombol:disabled { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }

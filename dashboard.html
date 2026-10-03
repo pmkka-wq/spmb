@@ -162,7 +162,7 @@
     }
     async function cekPengumumanBelumDibaca() {
         try {
-            const res = await API.getPengumuman();
+            const res = await API.getPengumuman(profil && profil.GELOMBANG);
             const rows = (res.ok && res.data && res.data.pengumuman) ? res.data.pengumuman : [];
             const dibaca = idPengumumanDibaca();
             const adaBaru = rows.some(function (r) { return dibaca.indexOf(r.PENGUMUMAN_ID) === -1; });
@@ -183,14 +183,14 @@
         latar.addEventListener("click", function (e) { if (e.target === latar) latar.remove(); });
 
         try {
-            const res = await API.getPengumuman();
+            const res = await API.getPengumuman(profil && profil.GELOMBANG);
             const rows = (res.ok && res.data && res.data.pengumuman) ? res.data.pengumuman : [];
             const isi = document.getElementById("isiModalPengumuman");
             isi.innerHTML = rows.length ? rows.map(function (r) {
                 return `<div class="kartu" style="margin-bottom:8px;">
                     <div style="font-weight:800;">${UI.escapeHtml(r.JUDUL)}</div>
                     <p class="teks-lembut" style="margin:4px 0;">${UI.escapeHtml(r.ISI || "")}</p>
-                    ${r.LINK_WA ? `<a href="${UI.escapeHtml(r.LINK_WA)}" target="_blank" rel="noreferrer" class="tombol tombol-wa blok" style="margin-top:6px;">${UI.ikon("wa")} Buka WhatsApp</a>` : ""}
+                    ${r.LINK_WA ? `<a href="${UI.escapeHtml(r.LINK_WA)}" target="_blank" rel="noreferrer" class="tombol utama blok" style="margin-top:6px;">${UI.ikon("panah")} Buka Link</a>` : ""}
                 </div>`;
             }).join("") : '<div class="teks-lembut" style="text-align:center;">Belum ada pengumuman.</div>';
 
@@ -300,13 +300,7 @@
                 <div class="label-mini">Amankan Kelas Sekarang</div>
                 <div class="nilai-besar" style="font-size:1.1rem;">Bayar DP minimal ${UI.formatRupiah(cfgPublik.BIAYA_DP_MIN)}</div>
                 <div class="teks-kecil" style="color:#cbd5c8; margin-top:6px;">Kursi kelas pilihanmu terjamin setelah DP dikonfirmasi. Sisa biaya boleh dicicil sampai lunas.</div>
-                ${rekening.length ? `<div style="margin-top:8px;">${rekening.map(function (r) {
-                    const u = UI.uraikanRekening(r);
-                    return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px;">
-                        <span class="teks-kecil" style="color:#cbd5c8;">${UI.escapeHtml(r)}</span>
-                        <button type="button" data-salin-rekening="${UI.escapeHtml(u.nomor)}" style="flex-shrink:0; padding:5px 8px; background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.25); color:#fff; font-size:0.65rem; border-radius:8px;">${UI.ikon("salin")} Salin</button>
-                    </div>`;
-                }).join("")}</div>` : ""}
+                ${rekening.length ? `<div style="margin-top:8px;">${rekening.map(UI.htmlRekening).join("")}</div>` : ""}
             </div>
 
             <div class="kartu" style="margin-top:12px;">
@@ -352,7 +346,7 @@
         `;
         pasangTombolBuka(isiTab);
         isiTab.querySelectorAll("[data-salin-rekening]").forEach(function (btn) {
-            btn.addEventListener("click", function () { UI.salin(btn.getAttribute("data-salin-rekening"), "Nomor rekening tersalin."); });
+            btn.addEventListener("click", function () { UI.salin(btn.getAttribute("data-salin-rekening").replace(/\D/g, ""), "Nomor rekening tersalin."); });
         });
 
         document.getElementById("btnUploadBayar").addEventListener("click", function () {
@@ -528,10 +522,12 @@
             document.querySelectorAll("[data-isi-nilai]").forEach(function (el) {
                 const v = el.value.trim().replace(",", ".");
                 if (!v) return;
-                if (isNaN(parseFloat(v)) || parseFloat(v) < 0 || parseFloat(v) > 100) salah = true;
-                kumpul[el.getAttribute("data-isi-nilai")].push(el.getAttribute("data-mapel") + ":" + v);
+                const kolom = el.getAttribute("data-isi-nilai");
+                const maksNilai = kolom === "NILAI_MAPEL_TKA" ? 1000 : 100; // TKA pakai skor (bukan skala 100) -> tiap mapel bisa sampai 1000
+                if (isNaN(parseFloat(v)) || parseFloat(v) < 0 || parseFloat(v) > maksNilai) salah = true;
+                kumpul[kolom].push(el.getAttribute("data-mapel") + ":" + v);
             });
-            if (salah) { errorBox.textContent = "Nilai harus angka 0-100."; errorBox.classList.add("tampil"); return; }
+            if (salah) { errorBox.textContent = "Nilai Rapor harus 0-100, nilai TKA harus 0-1000."; errorBox.classList.add("tampil"); return; }
             const prestasiEl = document.getElementById("f_prestasiBaru");
             const prestasiBaru = prestasiEl ? prestasiEl.value.trim() : "";
             if (!kumpul.NILAI_MAPEL_RAPOR.length && !kumpul.NILAI_MAPEL_TKA.length && !prestasiBaru) {
@@ -566,16 +562,17 @@
             return vals.length + " nilai — Jumlah: " + tot.toFixed(2) + " — Rata-rata: " + (tot / vals.length).toFixed(2);
         }
         const baris = [
-            ["Nama", p.NAMA_LENGKAP], ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR], ["NISN", p.NISN],
-            ["Asal Sekolah", p.ASAL_SEKOLAH], ["Nomor Pendaftaran", p.NO_PENDAFTARAN], ["Kelas Peminatan", p.KELAS_PEMINATAN],
+            ["NISN", p.NISN], ["Nomor Pendaftaran", p.NO_PENDAFTARAN], ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR],
+            ["Asal Sekolah", p.ASAL_SEKOLAH], ["Kelas Peminatan", p.KELAS_PEMINATAN],
             ["Boarding", p.BOARDING === "Ya" ? "Ya" : "Tidak"],
             ["Nilai Rapor", statNilai(p.NILAI_MAPEL_RAPOR)], ["Nilai TKA", statNilai(p.NILAI_MAPEL_TKA)],
         ];
-        UI.cetakHalaman("Bukti Pendaftaran - " + p.NAMA_LENGKAP, `
-            <h1>Bukti Pendaftaran</h1>
-            <div class="sub">${UI.escapeHtml(cfgPublik.NAMA_SEKOLAH || "")} — SPMB ${UI.escapeHtml(cfgPublik.TAHUN_AJARAN || "")}</div>
-            <table>${baris.map(function (b) { return `<tr><td>${UI.escapeHtml(b[0])}</td><td>${UI.escapeHtml(b[1] == null || b[1] === "" ? "-" : String(b[1]))}</td></tr>`; }).join("")}</table>
-        `);
+        UI.cetakHalaman(
+            "Bukti Pendaftaran - " + p.NAMA_LENGKAP,
+            `<div style="text-align:center; font-size:1.25rem; font-weight:800; margin-bottom:18px;">${UI.escapeHtml(p.NAMA_LENGKAP)}</div>
+            <table>${baris.map(function (b) { return `<tr><td>${UI.escapeHtml(b[0])}</td><td>${UI.escapeHtml(b[1] == null || b[1] === "" ? "-" : String(b[1]))}</td></tr>`; }).join("")}</table>`,
+            { judulDok: "BUKTI PENDAFTARAN", subJudul1: "SPMB TA " + (cfgPublik.TAHUN_AJARAN || "-"), subJudul2: (cfgPublik.NAMA_SEKOLAH || "").toUpperCase() }
+        );
     }
 
     // -----------------------------------------------------------------
@@ -588,15 +585,15 @@
         const bagian = [
             ["Data Calon Siswa", [
                 ["Nama Lengkap", p.NAMA_LENGKAP], ["NISN", p.NISN], ["Jenis Kelamin", p.JENIS_KELAMIN],
-                ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR], ["Asal Sekolah", p.ASAL_SEKOLAH], ["Alamat", p.ALAMAT],
+                ["Tempat, Tanggal Lahir", p.TEMPAT_TGL_LAHIR], ["Asal Sekolah", p.ASAL_SEKOLAH], ["Alamat", UI.tampilAlamat(p.ALAMAT)],
                 ["Anak ke-", p.ANAK_KE], ["Jumlah Saudara", p.JUMLAH_SAUDARA], ["No. HP", p.NO_HP], ["Email", p.EMAIL],
             ]],
             ["Data Ayah", [
-                ["Nama", p.NAMA_AYAH], ["Pekerjaan", p.PEKERJAAN_AYAH], ["No. HP", p.NO_HP_AYAH], ["Alamat", p.ALAMAT_AYAH],
+                ["Nama", p.NAMA_AYAH], ["Pekerjaan", p.PEKERJAAN_AYAH], ["No. HP", p.NO_HP_AYAH], ["Alamat", UI.tampilAlamat(p.ALAMAT_AYAH)],
                 ["Almarhum", p.SUDAH_ALMARHUM_AYAH],
             ]],
             ["Data Ibu", [
-                ["Nama", p.NAMA_IBU], ["Pekerjaan", p.PEKERJAAN_IBU], ["No. HP", p.NO_HP_IBU], ["Alamat", p.ALAMAT_IBU],
+                ["Nama", p.NAMA_IBU], ["Pekerjaan", p.PEKERJAAN_IBU], ["No. HP", p.NO_HP_IBU], ["Alamat", UI.tampilAlamat(p.ALAMAT_IBU)],
                 ["Almarhum", p.SUDAH_ALMARHUM_IBU],
             ]],
             ["Data Wali", [["Nama", p.NAMA_WALI], ["Hubungan", p.HUBUNGAN_WALI], ["No. HP", p.NO_HP_WALI]]],

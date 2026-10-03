@@ -101,10 +101,17 @@ const UI = (() => {
      * @param {string} template
      * @param {Object} data - { key: value }
      */
+    /**
+     * Ganti {placeholder} di template. Case-INSENSITIVE ({kelas_peminatan}
+     * dan {KELAS_PEMINATAN} dua-duanya cocok) karena orang yang mengisi
+     * template di CONFIG sering pakai gaya huruf besar ala nama kolom
+     * database tanpa sadar placeholder-nya sebenarnya huruf kecil.
+     */
     function isiTemplate(template, data) {
         let hasil = String(template || "");
         Object.keys(data || {}).forEach(function (k) {
-            hasil = hasil.split("{" + k + "}").join(data[k] == null ? "" : String(data[k]));
+            const re = new RegExp("\\{" + k + "\\}", "gi");
+            hasil = hasil.replace(re, data[k] == null ? "" : String(data[k]));
         });
         return hasil;
     }
@@ -162,15 +169,56 @@ const UI = (() => {
     }
 
     /**
-     * Pecah "BSI 7123456789 a.n. Nama" jadi { bank, nomor, pemilik } kalau
-     * polanya cocok; kalau tidak, nomor fallback ke seluruh teks (tetap
-     * bisa disalin, cuma label banknya kosong).
+     * Uraikan teks rekening dari CONFIG (REKENING_1/2).
+     * FORMAT RESMI: "nama_bank,no_rek,atas_nama"
+     *   contoh: BANK MANDIRI,111222333555,Sinta Malihah
+     * -> { bank:"BANK MANDIRI", nomor:"111222333555", pemilik:"Sinta Malihah" }
+     * Yang disalin ke clipboard HANYA `nomor`. Atas nama boleh mengandung
+     * koma (semua bagian setelah no_rek digabung kembali).
+     * Fallback (kalau admin salah format / tidak ada koma): cari deretan
+     * digit terpanjang sebagai nomor, supaya tombol salin tetap berguna.
      */
     function uraikanRekening(teks) {
-        const s = String(teks || "");
-        const m = s.match(/^(\S+)\s+([\d\-.\s]{6,})\s*(?:a\.?n\.?\s*(.+))?$/i);
-        if (!m) return { bank: "", nomor: s, pemilik: "" };
-        return { bank: m[1], nomor: m[2].trim(), pemilik: (m[3] || "").trim() };
+        const s = String(teks || "").trim();
+        const bagian = s.split(",").map(function (x) { return x.trim(); });
+        if (bagian.length >= 3 && /\d{5,}/.test(bagian[1].replace(/[\s-]/g, ""))) {
+            return { bank: bagian[0], nomor: bagian[1].replace(/[\s-]/g, ""), pemilik: bagian.slice(2).join(", ") };
+        }
+        const kandidat = s.match(/\d[\d\-\s]{4,}\d/g) || [];
+        if (!kandidat.length) return { bank: "", nomor: s, pemilik: "" };
+        const terpanjang = kandidat.reduce(function (a, b) { return b.replace(/\D/g, "").length > a.replace(/\D/g, "").length ? b : a; });
+        const i = s.indexOf(terpanjang);
+        return {
+            bank: s.slice(0, i).replace(/[,\s]+$/, "").trim(),
+            nomor: terpanjang.replace(/[\s-]/g, ""),
+            pemilik: s.slice(i + terpanjang.length).replace(/^[\s,-]*(a\.?n\.?)?[\s:.-]*/i, "").trim(),
+        };
+    }
+
+    /**
+     * Blok HTML satu rekening, untuk latar GELAP (kartu hijau tua):
+     *   Bank [nama_bank]
+     *   Nomor rekening [no_rek] [ikon salin]
+     *   Atas nama [atas_nama]
+     * Tombol salin memakai atribut data-salin-rekening (listener dipasang
+     * di halaman pemanggil) dan hanya menyalin no_rek.
+     */
+    function htmlRekening(teks) {
+        const r = uraikanRekening(teks);
+        const baris = function (label, isi) {
+            return '<div style="display:flex; gap:8px; font-size:0.78rem; line-height:1.5;"><span style="min-width:96px; color:#cbd5c8;">' + label + '</span><span style="font-weight:800; color:#fff;">' + escapeHtml(isi) + '</span></div>';
+        };
+        return '<div style="margin-top:8px; padding:10px 12px; background:rgba(255,255,255,0.08); border-radius:10px;">'
+            + (r.bank ? baris("Bank", r.bank) : "")
+            + '<div style="display:flex; align-items:center; gap:8px; font-size:0.78rem; line-height:1.5;"><span style="min-width:96px; color:#cbd5c8;">Nomor rekening</span><span style="font-weight:800; color:#fff; letter-spacing:0.02em;">' + escapeHtml(r.nomor) + '</span>'
+            + '<button type="button" data-salin-rekening="' + escapeHtml(r.nomor) + '" aria-label="Salin nomor rekening" style="flex-shrink:0; padding:4px 7px; background:rgba(255,255,255,0.15); border-color:rgba(255,255,255,0.25); color:#fff; border-radius:8px; line-height:1;">' + ikon("salin") + '</button></div>'
+            + (r.pemilik ? baris("Atas nama", r.pemilik) : "")
+            + '</div>';
+    }
+
+    /** Alamat tersimpan memakai ";" sebagai pemisah (Master Context 6.7); ke pengguna ditampilkan dengan koma. */
+    function tampilAlamat(teks) {
+        return String(teks || "").split(";").map(function (x) { return x.trim(); }).filter(Boolean).join(", ");
     }
 
     /**
@@ -181,23 +229,43 @@ const UI = (() => {
      * @param {string} judul - jadi <title> tab & nama file saat disimpan
      * @param {string} htmlIsi - HTML konten (tanpa <html>/<body>)
      */
-    function cetakHalaman(judul, htmlIsi) {
+    /**
+     * @param {string} judul - <title> tab & nama file
+     * @param {string} htmlIsi - konten utama (tabel dkk)
+     * @param {Object} [kop] - { judulDok, subJudul1, subJudul2 } untuk kop
+     *   resmi di atas (mis. "BUKTI PENDAFTARAN" / "SPMB TA 2026/2027" /
+     *   "SMP MUHAMMADIYAH 2 CILACAP"). Opsional — kalau tidak diisi, tidak
+     *   ada kop, langsung konten.
+     */
+    function cetakHalaman(judul, htmlIsi, kop) {
         const w = window.open("", "_blank");
         if (!w) { toast("Popup diblokir browser — izinkan popup untuk mencetak.", "error"); return; }
+        const htmlKop = kop ? `
+            <div class="kop">
+                <div class="kop-judul">${escapeHtml(kop.judulDok || "")}</div>
+                ${kop.subJudul1 ? `<div class="kop-sub">${escapeHtml(kop.subJudul1)}</div>` : ""}
+                ${kop.subJudul2 ? `<div class="kop-sub">${escapeHtml(kop.subJudul2)}</div>` : ""}
+            </div>` : "";
         w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(judul)}</title>
             <style>
+                @page { size: A4 portrait; margin: 18mm 16mm; }
                 * { box-sizing: border-box; }
-                body { font-family: -apple-system, system-ui, sans-serif; color: #1a2e22; padding: 32px; max-width: 700px; margin: 0 auto; }
-                h1 { font-size: 1.3rem; margin: 0 0 4px; }
-                .sub { color: #6b7c72; font-size: 0.85rem; margin-bottom: 20px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                td { padding: 8px 4px; border-bottom: 1px solid #e5e9e6; font-size: 0.92rem; }
-                td:first-child { color: #6b7c72; width: 45%; }
-                td:last-child { font-weight: 700; }
-                .cap { margin-top: 28px; font-size: 0.75rem; color: #6b7c72; text-align: center; }
+                body { font-family: -apple-system, system-ui, "Segoe UI", sans-serif; color: #1a2e22; padding: 28px; max-width: 700px; margin: 0 auto; }
+                .kop { text-align: center; border-bottom: 3px solid #1d6e4a; padding-bottom: 14px; margin-bottom: 22px; }
+                .kop-judul { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.04em; color: #1d6e4a; }
+                .kop-sub { font-size: 0.85rem; color: #45564c; margin-top: 2px; }
+                h1 { font-size: 1.35rem; margin: 0 0 4px; text-align: center; }
+                .sub { color: #6b7c72; font-size: 0.85rem; margin-bottom: 20px; text-align: center; }
+                table { width: 100%; border-collapse: collapse; margin-top: 10px; border: 1px solid #dbe6df; border-radius: 6px; overflow: hidden; }
+                td { padding: 10px 14px; font-size: 0.92rem; border-bottom: 1px solid #eef3f0; }
+                tr:nth-child(even) td { background: #f4f8fd; } /* zebra biru sangat muda, hampir putih */
+                tr:last-child td { border-bottom: none; }
+                td:first-child { color: #51645a; width: 42%; font-weight: 600; }
+                td:last-child { font-weight: 700; color: #16201a; }
+                .cap { margin-top: 28px; font-size: 0.72rem; color: #8a9790; text-align: center; }
                 @media print { body { padding: 0; } }
             </style>
-            </head><body>${htmlIsi}
+            </head><body>${htmlKop}${htmlIsi}
             <div class="cap">Dicetak dari SPMB — ${new Date().toLocaleString("id-ID")}</div>
             <script>window.onload = function () { window.print(); };<\/script>
             </body></html>`);
@@ -233,5 +301,5 @@ const UI = (() => {
         });
     }
 
-    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA, isiTemplate, bukaFile, cetakHalaman, salin, uraikanRekening, pasangToggleSandi };
+    return { ikon, toast, escapeHtml, formatRupiah, csvKeArray, formatTanggal, linkWA, isiTemplate, bukaFile, cetakHalaman, salin, uraikanRekening, htmlRekening, tampilAlamat, pasangToggleSandi };
 })();
